@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+*.tsbuildinfo
+runners/
+test ttrpgs/
+user-project-plan.md
+
+# Build artifacts that may leak into src/
+src/**/*.js
+src/**/*.js.map
+src/**/*.d.ts
+src/**/*.d.ts.map

@@ -1,0 +1,25 @@
+{
+  "name": "brigliadoro",
+  "version": "0.1.0",
+  "description": "TTRPG harness that generates bespoke game runners using Claude agents",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "generate": "tsx src/meta/run.ts"
+  },
+  "license": "CC-BY-SA-4.0",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.0"
+  }
+}
