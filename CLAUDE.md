@@ -112,6 +112,7 @@ Model selection rationale: Opus for decisions requiring taste and narrative judg
 - **Claude Agent SDK, not raw API** — the SDK handles the agentic loop, tool execution, session persistence, and subagent orchestration; we don't reimplement any of that
 - **Custom tools as in-process MCP servers** — no network overhead, tools run in the same process as the agent
 - **GM Claude sees final results only** — resolution primitives are straightforward ground-truth code; GM operates at the fiction layer, not the mechanics layer
+- **Tool results are self-interpreting** — each tool returns the outcome tier AND its narrative guidance (e.g. "Partial success — you get what you want, but at a price"). The GM prompt covers tone and principles; mechanical interpretation lives exclusively in the tools.
 - **Knowledge base uses glob/grep, not RAG/vector DB** — per Anthropic's own recommendation that agent-driven file exploration outperforms vector search
 - **Clocks are universal** — GM Claude should use clocks/progress meters regardless of whether the source TTRPG includes them
 - **Broad genre support required** — must handle OSR, narrative, diceless, and GMless games (where "GM" becomes facilitator/fellow player)
@@ -127,6 +128,10 @@ After mechanic adaptation works on simple games:
 2. **Lore distillation** — succinct summary always in context + greppable deeper lore for lookups
 3. **Persistent game state** — character sheets, NPCs, factions, world concepts
 4. **GM Claude quality** — narrative theory, GM principles, smooth conversational style, session zero for player calibration + safety tools
+
+## Runner Regeneration
+
+Code changes to brigliadoro (primitives, Meta-TTRPGinator prompt, play harness, etc.) may require regenerating existing runners. Delete the old runner directory and re-run `npm run generate`. **Always ask the user before regenerating** — runner generation uses the Claude API and counts against subscription rate limits.
 
 ## Test Material
 

@@ -31,3 +31,8 @@ export { createBrigliadoroServer } from "./tools/index.js";
 
 // State
 export { SessionStore } from "./state/session-store.js";
+
+// Runner utilities
+export { buildGMSystemPrompt } from "./runner/gm-prompt-template.js";
+export type { GMPromptConfig } from "./runner/gm-prompt-template.js";
+export { createScratchpadTool } from "./runner/scratchpad-tool.js";

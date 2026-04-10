@@ -7,7 +7,7 @@ export const PRIMITIVES_API_REFERENCE = `
 ## Foundation Primitives API
 
 These are the available primitives you MUST use when generating game tools.
-Import them from the brigliadoro package: \`import { rollDice, drawFromPool, ... } from "../../src/primitives/index.js";\`
+Import them from the runner's lib folder: \`import { rollDice, drawFromPool, ... } from "../lib/primitives/index.js";\`
 
 ### rollDice(notation: string, rng?: () => number): DiceRollResult
 
@@ -90,7 +90,7 @@ import type {
   DrawResult, WeightedPickResult,
   ResourceState, ResourceOpResult,
   ClockState, ClockOpResult, DeckState
-} from "../../src/types/index.js";
+} from "../lib/types/index.js";
 
 ## MCP Tool Pattern
 
@@ -99,7 +99,7 @@ Game tools must be defined using this exact pattern:
 \`\`\`typescript
 import { z } from "zod";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
-import { rollDice } from "../../src/primitives/index.js";
+import { rollDice } from "../lib/primitives/index.js";
 
 export function createMyTool() {
   return tool(

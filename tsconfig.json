@@ -17,5 +17,5 @@
     "isolatedModules": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "tests", "runners"]
+  "exclude": ["node_modules", "dist", "tests", "runners", "src/runner/play.ts"]
 }
