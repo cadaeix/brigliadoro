@@ -1,9 +1,12 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { execSync } from "node:child_process";
-import { PRIMITIVES_API_REFERENCE } from "./primitives-api.js";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import { ORCHESTRATOR_PROMPT } from "./prompts/orchestrator.js";
+import { TOOL_BUILDER_PROMPT } from "./prompts/tool-builder.js";
+import { GM_CHARACTERIZER_PROMPT } from "./prompts/gm-characterizer.js";
+import { VALIDATOR_PROMPT } from "./prompts/validator.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,100 +36,67 @@ function copyDirRecursive(
   }
 }
 
-const SYSTEM_PROMPT = `You are the Meta-TTRPGinator, part of the Brigliadoro system. Your job is to read a TTRPG sourcebook and generate a complete, working runner — a set of MCP game tools, tests, lore files, and configuration that a GM Claude agent will use to run the game.
+// Prompts are now in separate files under src/meta/prompts/
 
-## Your Process
+type AgentModel = "sonnet" | "opus" | "haiku";
 
-1. READ the sourcebook thoroughly. Identify:
-   - Core resolution mechanic(s) — how dice/cards/resources determine outcomes
-   - Character creation rules — stats, attributes, skills, special abilities
-   - Specific moves, actions, or abilities that have mechanical triggers
-   - Setting/lore essentials — tone, world, factions, key concepts
-   - GM guidance — how the GM should run the game, pacing advice, principles
+/**
+ * Model assignments for each agent in the generation pipeline.
+ * Tune these to balance quality vs. cost/speed.
+ *
+ * Rationale from CLAUDE.md:
+ * - Opus: decisions requiring taste and narrative judgment
+ * - Sonnet: bulk code generation
+ * - Haiku: cheap repetitive parsing/validation
+ */
+interface ModelConfig {
+  /** Orchestrator: reads sourcebook, coordinates subagents. Benefits from judgment. */
+  orchestrator: AgentModel;
+  /** Tool Builder: writes mechanical TypeScript code. Sonnet's sweet spot. */
+  toolBuilder: AgentModel;
+  /** GM Characterizer: captures tone, narrative, play experience. Benefits from taste. */
+  gmCharacterizer: AgentModel;
+  /** Validator: writes tests, runs them, fixes failures. Mechanical work. */
+  validator: AgentModel;
+}
 
-2. DESIGN game tools. Each distinct mechanical action becomes its own MCP tool:
-   - Each tool wraps one or more foundation primitives (rollDice, drawFromPool, etc.)
-   - Each tool has a clear narrative trigger condition in its description (so GM Claude picks it by fiction, not by mechanics)
-   - Each tool handles the full mechanical resolution internally and returns an interpreted, narrative-ready result
-   - **Tool results must be self-interpreting.** The tool output should include the outcome tier AND its narrative guidance (e.g. "Partial success — you get what you want, but at a price"). GM Claude should be able to narrate directly from the tool result without consulting any other reference.
-   - GM Claude should NEVER need to do math, remember mechanical rules, or look up result interpretation tables — tools do ALL of that
-
-3. GENERATE the runner files in the output directory:
-
-   a. \`tools/\` — TypeScript files, one per game tool (or grouped logically)
-      - Each exports a factory function: \`createXxxTool()\` or \`createXxxTool(store: SessionStore)\`
-      - Use the foundation primitives, never raw Math.random
-      - Return structured JSON results that GM Claude can narrate from
-
-   b. \`tools/server.ts\` — assembles all game tools into one MCP server:
-      \`\`\`typescript
-      import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
-      import { SessionStore } from "../lib/state/session-store.js";
-      // import game tools...
-
-      export function createGameServer() {
-        const store = new SessionStore();
-        return createSdkMcpServer({
-          name: "game-name",
-          version: "1.0.0",
-          tools: [/* all game tools */],
-        });
-      }
-      \`\`\`
-
-   c. \`tests/\` — vitest test files for the game tools
-      - Test the mechanical logic with deterministic RNG
-      - Cover: basic success, failure, edge cases, special triggers
-
-   d. \`lore/\` — JSON files with setting information:
-      - \`summary.json\` — concise overview (always loaded into GM Claude's context)
-        Contains: title, tone, premise, player_role, key_concepts
-      - Additional JSON files for deeper lore (greppable/globbable)
-
-   e. \`config.json\` — runner configuration:
-      \`\`\`json
-      {
-        "name": "Game Name",
-        "version": "1.0.0",
-        "source": "Source attribution",
-        "license": "CC BY 4.0 or whatever applies",
-        "description": "One-line description",
-        "gmPrompt": "System prompt for GM Claude (personality, principles, how to use tools)",
-        "characterCreation": {
-          "steps": ["step 1 description", "step 2", ...],
-          "choices": { "stat_name": ["option1", "option2", ...] }
-        }
-      }
-      \`\`\`
-
-4. The gmPrompt in config.json is the GAME-SPECIFIC part of the GM's instructions. The runner harness automatically wraps it with universal session lifecycle behavior (greeting, session zero, play loop, session end, scratchpad usage). So the gmPrompt should ONLY contain:
-   - The game's tone, setting, and world
-   - Which tools to use and when (by narrative trigger, not mechanical rule)
-   - GM principles from the source material (e.g. "play to find out what happens")
-   - Game-specific narration guidance (how to describe this world, NPC personality tips)
-   - Do NOT include instructions about greeting the player, character creation flow, session management, or scratchpad usage — those are handled by the universal harness.
-   - Do NOT duplicate mechanical interpretation in the GM prompt — tools are the single source of truth for how results are interpreted.
-
-## Important Rules
-
-- ALL imports from primitives/types/state use the runner's local lib folder: \`../lib/primitives/index.js\`, \`../lib/types/index.js\`, \`../lib/state/session-store.js\`
-- ALL imports must use .js extensions (ESM project)
-- Use \`import { z } from "zod";\` for schemas
-- Use \`import { tool } from "@anthropic-ai/claude-agent-sdk";\` for tool definitions
-- Game tools return \`{ content: [{ type: "text" as const, text: JSON.stringify(result) }] }\`
-- Use \`isError: true\` for recoverable errors, never throw
-- Use the SessionStore for any state that persists across tool calls (character stats, tracked resources, clocks)
-- Tests must use the seededRng pattern for deterministic testing
-- Use platform-neutral language in READMEs and docs — say "terminal" or "shell", not "bash". Use \`sh\` or \`shell\` as the code block language tag. The project runs on Windows, macOS, and Linux.
-
-${PRIMITIVES_API_REFERENCE}
-`;
+const MODEL_CONFIGS: Record<string, ModelConfig> = {
+  /** All Sonnet — cheapest, good baseline. */
+  default: {
+    orchestrator: "sonnet",
+    toolBuilder: "sonnet",
+    gmCharacterizer: "sonnet",
+    validator: "sonnet",
+  },
+  /** Opus for judgment calls, Sonnet for code, Haiku for validation. */
+  quality: {
+    orchestrator: "opus",
+    toolBuilder: "sonnet",
+    gmCharacterizer: "opus",
+    validator: "haiku",
+  },
+};
 
 async function main() {
   const args = process.argv.slice(2);
+
+  // Parse --models flag (e.g., --models quality)
+  let modelPreset = "default";
+  const modelsIdx = args.indexOf("--models");
+  if (modelsIdx !== -1) {
+    modelPreset = args[modelsIdx + 1] ?? "default";
+    args.splice(modelsIdx, 2);
+  }
+
   if (args.length < 2) {
-    console.error("Usage: npx tsx src/meta/run.ts <sourcebook-path> <runner-name>");
+    console.error("Usage: npx tsx src/meta/run.ts <sourcebook-path> <runner-name> [--models default|quality]");
     console.error("Example: npx tsx src/meta/run.ts 'test ttrpgs/one page rpgs/lasers_and_feelings_rpg.pdf' lasers-and-feelings");
+    process.exit(1);
+  }
+
+  const models = MODEL_CONFIGS[modelPreset];
+  if (!models) {
+    console.error(`Unknown model preset: ${modelPreset}. Available: ${Object.keys(MODEL_CONFIGS).join(", ")}`);
     process.exit(1);
   }
 
@@ -185,38 +155,55 @@ async function main() {
 
   console.log(`\n🎲 Meta-TTRPGinator starting`);
   console.log(`   Source: ${sourcebookPath}`);
-  console.log(`   Output: ${runnerDir}\n`);
+  console.log(`   Output: ${runnerDir}`);
+  console.log(`   Models: ${modelPreset} (orchestrator=${models.orchestrator}, tools=${models.toolBuilder}, gm=${models.gmCharacterizer}, validator=${models.validator})\n`);
 
   const prompt = `Read the TTRPG sourcebook at "${sourcebookPath}" and generate a complete runner in the directory "${runnerDir}".
 
-Create all the necessary files:
-1. Game-specific MCP tools in ${runnerDir}/tools/ that wrap the foundation primitives
-2. A server.ts that assembles all tools
-3. Tests in ${runnerDir}/tests/
-4. Lore files in ${runnerDir}/lore/
-5. A config.json with the GM prompt and character creation info
+The runner needs:
+1. Game-specific MCP tools in ${runnerDir}/tools/ (delegate to tool-builder)
+2. A config.json with GM prompt, lore, and character creation (delegate to gm-characterizer)
+3. Tests in ${runnerDir}/tests/ that pass (delegate to validator)
 
 Do NOT create play.ts, package.json, lib/, or state/ — these are already set up by the runner harness.
 
-After generating all files, run the tests with: npx vitest run ${runnerDir}/tests/
-
-Make sure everything compiles and tests pass before finishing.`;
+Follow your orchestration protocol: read the sourcebook, analyze it, then delegate to your subagents in the correct sequence.`;
 
   let lastResult = "";
   for await (const message of query({
     prompt,
     options: {
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt: ORCHESTRATOR_PROMPT,
       allowedTools: [
         "Read",
-        "Write",
-        "Edit",
-        "Bash",
         "Glob",
         "Grep",
       ],
       permissionMode: "bypassPermissions",
-      model: "sonnet",
+      model: models.orchestrator,
+      agents: {
+        "tool-builder": {
+          description:
+            "Build MCP game tools implementing the TTRPG's mechanical resolution. Creates tool files and server.ts in the runner's tools/ directory.",
+          tools: ["Read", "Write", "Edit", "Glob", "Grep"],
+          prompt: TOOL_BUILDER_PROMPT,
+          model: models.toolBuilder,
+        },
+        "gm-characterizer": {
+          description:
+            "Write GM prompt, character creation config, lore summary, and config.json. Use after tools are built, passing tool names and descriptions.",
+          tools: ["Read", "Write", "Edit", "Glob", "Grep"],
+          prompt: GM_CHARACTERIZER_PROMPT,
+          model: models.gmCharacterizer,
+        },
+        "validator": {
+          description:
+            "Write vitest tests for game tools, run them, and fix test failures. Use after tools are built. Reports tool code bugs back instead of fixing them.",
+          tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+          prompt: VALIDATOR_PROMPT,
+          model: models.validator,
+        },
+      },
     },
   })) {
     if ("type" in message) {
