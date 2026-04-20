@@ -53,6 +53,13 @@ Send your **mechanics analysis** to the tool-builder subagent. Include:
 - Any specific moves/actions that should become tools
 - Tables or random generators that should become tools
 - Enough setting context for the tool-builder to write good tool descriptions (narrative trigger conditions)
+- **Enough fiction-flavor context** for the tool-builder to write realistic
+  scene prompts for its trigger-eval corpus. Give it examples of player
+  utterances appropriate to this game's tone and mechanics so the evals
+  read like real play.
+
+The tool-builder will produce files in both \`tools/\` (code) and \`evals/\`
+(trigger-eval corpus, one \`.triggers.json\` per tool file).
 
 Wait for the tool-builder to finish before proceeding.
 
@@ -92,8 +99,13 @@ If the validator reports tool code bugs (not test bugs), delegate back to the to
 Use Glob and Read to confirm all expected files exist:
 - \`tools/\` contains at least one tool file and \`server.ts\`
 - \`tests/\` contains test files
+- \`evals/\` contains one \`<tool-file>.triggers.json\` per tool file
 - \`lore/summary.json\` exists
 - \`config.json\` exists and contains gmPrompt, characterCreation
+
+If a tool file has no corresponding \`.triggers.json\` in \`evals/\`, delegate
+back to the tool-builder to produce it — don't skip. The trigger-eval corpus
+is a load-bearing artifact, not an optional extra.
 
 Report completion with a summary of what was generated.
 
@@ -102,7 +114,8 @@ Report completion with a summary of what was generated.
 The runner directory is pre-created with this structure:
 \`\`\`
 runners/<name>/
-├── tools/       ← tool-builder writes here
+├── tools/       ← tool-builder writes TypeScript here
+├── evals/       ← tool-builder writes triggers.json here (one per tool file)
 ├── tests/       ← validator writes here
 ├── lore/        ← gm-characterizer writes here
 ├── state/       ← empty, used at play time

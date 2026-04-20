@@ -9,7 +9,8 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "generate": "tsx src/meta/run.ts"
+    "generate": "tsx src/meta/run.ts",
+    "trigger-eval": "tsx src/meta/trigger-eval.ts"
   },
   "license": "MIT",
   "dependencies": {

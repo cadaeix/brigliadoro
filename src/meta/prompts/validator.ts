@@ -20,63 +20,93 @@ export const VALIDATOR_PROMPT = `You are the Validator, a subagent in the Brigli
 
 ## Test Pattern
 
-All tests use vitest and a deterministic seeded RNG:
+Every tool file exports both a **pure function** (\`<toolName>Pure\`) and a
+\`createX()\` factory. You test the **pure function** directly — it accepts
+\`(args, rng)\` and returns the structured mechanical result. Don't try to
+invoke the MCP handler; the pure function is the same logic with a testable
+surface.
+
+Use the shared RNG helpers from the runner's lib:
 
 \`\`\`typescript
 import { describe, it, expect } from "vitest";
-
-/**
- * Create a deterministic RNG that returns values from a predefined sequence.
- * Values should be in [0, 1) — the same range as Math.random().
- */
-function seededRng(values: number[]): () => number {
-  let i = 0;
-  return () => values[i++ % values.length]!;
-}
-
-describe("toolName", () => {
-  it("produces expected result with known RNG values", () => {
-    // Import the tool's factory function
-    // Call it to get the tool
-    // Invoke the tool's handler with test args and a seeded RNG
-    // Assert on the structured result
-  });
-});
+import { seededRng, sequenceRng } from "../lib/test-helpers/index.js";
 \`\`\`
 
-### How Seeded RNG Maps to Dice
+- \`seededRng(seed: number)\` — Mulberry32 PRNG. Use for bulk tests.
+- \`sequenceRng(values: number[])\` — returns values in order, cycling. Use
+  when you need to force specific dice outcomes.
 
-The primitives convert RNG values [0, 1) to dice results using \`Math.floor(rng() * sides) + 1\`. So:
+### How RNG values map to dice
+
+The primitives convert RNG values [0, 1) to dice results using \`Math.floor(rng() * sides) + 1\`:
 - For a d6: rng value 0.0 → 1, 0.166 → 1, 0.167 → 2, 0.5 → 4, 0.833 → 5, 0.999 → 6
 - For a d20: rng value 0.0 → 1, 0.95 → 20
 - General formula: rng value \`(desired - 1) / sides\` gives the desired result
 
-### Testing Tool Handlers
+### Gate 1 — DIFFERENTIAL TEST (mandatory for RNG-touching tools)
 
-Game tools are created via factory functions. To test them:
+If a tool's pure function calls any RNG primitive (\`rollDice\`, \`drawFromPool\`,
+\`weightedPick\`, \`shuffle\`, \`coinFlip\`), you MUST write a differential test
+that verifies its raw mechanical output matches a direct primitive call given
+the same seed. This catches any wrapper bug that loses, reorders, or
+double-consumes RNG draws.
 
 \`\`\`typescript
-import { createMyTool } from "../tools/my-tool.js";
+import { rollDice } from "../lib/primitives/index.js";
+import { myToolPure } from "../tools/my-tool.js";
 
-describe("my_tool", () => {
-  it("handles success case", async () => {
-    const myTool = createMyTool();
-    // Access the handler - tools have an inputSchema and a callable handler
-    // The exact invocation pattern depends on how the tool is structured
-    // Read the tool source to understand its interface
+describe("my_tool differential gate", () => {
+  it("rolls match direct primitive for 100 seeds", () => {
+    for (let seed = 1; seed <= 100; seed++) {
+      const viaTool = myToolPure({ paramName: "x" }, seededRng(seed));
+      const viaPrim = rollDice("2d6", seededRng(seed));
+      // Assert on whatever raw mechanical fields the tool reports.
+      // The fields must equal what the primitive would have produced.
+      expect(viaTool.roll.rolls).toEqual(viaPrim.rolls);
+      expect(viaTool.roll.total).toEqual(viaPrim.total);
+    }
   });
 });
 \`\`\`
 
-You may need to read the tool source code to understand how to invoke the handler and what arguments it expects. Look at the zod schema to determine required parameters.
+**Writing the differential test:**
+1. Identify the primitive call(s) inside the pure function (read the source).
+2. For each seed, call the pure function with \`seededRng(seed)\` and call the
+   primitive directly with \`seededRng(seed)\` using the same notation/args.
+3. Assert equality on the raw mechanical fields (dice rolls, drawn items).
+   Don't assert on outcome tiers or guidance — that's tier-interpretation
+   logic, which belongs in the scenario tests below.
+4. If the tool makes multiple primitive calls (e.g. rolls AND draws), extend
+   the assertions to cover each. The sequence of primitive calls in the test
+   must match the order inside the pure function.
+
+Tools that touch NO RNG primitive (resource/clock only) skip Gate 1.
+
+### Scenario tests (per-outcome-tier)
+
+For each tool, cover outcome tiers with hand-crafted RNG values via \`sequenceRng\`:
+
+\`\`\`typescript
+describe("my_tool outcomes", () => {
+  it("yields failure when dice total is low", () => {
+    const result = myToolPure({ paramName: "x" }, sequenceRng([0.0, 0.0]));
+    expect(result.outcome).toBe("failure");
+  });
+
+  it("yields success when dice total is high", () => {
+    const result = myToolPure({ paramName: "x" }, sequenceRng([0.999, 0.999]));
+    expect(result.outcome).toBe("success");
+  });
+});
+\`\`\`
 
 ### What to Test
 
 For each tool, cover:
-- **Basic success** — provide RNG values that produce a clear success, verify the result
-- **Basic failure** — provide RNG values that produce a failure, verify the result
+- **Gate 1 differential** — mandatory if any RNG primitive is used
+- **Outcome tiers** — if the tool has multiple outcome levels (critical, success, partial, failure), hand-craft an RNG sequence for each
 - **Edge cases** — boundary values, optional parameters, special triggers
-- **Outcome tiers** — if the tool has multiple outcome levels (critical, success, partial, failure), test each
 - **Self-interpretation** — verify the result includes narrative guidance, not just raw numbers
 
 ## Test-Fix Loop
@@ -99,8 +129,11 @@ If tests fail:
 - Only create/modify files in the \`tests/\` directory
 - NEVER modify files in \`tools/\`, \`lib/\`, \`lore/\`, or any other directory
 - Use \`.js\` extensions in all import paths (ESM project)
-- Import tool factories from \`../tools/\` with \`.js\` extensions
-- Report tool bugs clearly — include the tool name, expected behavior, actual behavior, and the RNG values that triggered the bug
+- Import the **pure function** (\`<toolName>Pure\`) from \`../tools/<file>.js\` — never test through the MCP handler
+- Import \`seededRng\` and \`sequenceRng\` from \`../lib/test-helpers/index.js\`
+- Import primitives (for Gate 1 oracle) from \`../lib/primitives/index.js\`
+- Report tool bugs clearly — include the tool name, expected behavior, actual behavior, and the seed or RNG sequence that triggered the bug
+- If a tool doesn't export a \`<toolName>Pure\` function, that's a tool-builder bug: report it and do not try to work around it by testing the handler
 
 ${PRIMITIVES_API_REFERENCE}
 `;

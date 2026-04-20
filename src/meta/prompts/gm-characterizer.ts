@@ -64,13 +64,16 @@ The gmPrompt is the **game-specific** part of the GM agent's instructions. It's 
 
 2. **The World** — Key setting details the GM needs to inhabit the fiction. Locations, factions, technology, threats — enough to improvise from, not an encyclopedia.
 
-3. **Tool Usage Guidance** — For each game tool, write a section explaining:
+3. **Tool Usage Guidance** — **This section carries ALL prose/tonal guidance for how to narrate tool results.** Tools return only structured hints (\`outcome_tier\`, \`pressure\`, \`salient_facts\`, \`suggested_beats\`, plus raw mechanical facts) — the gmPrompt is the single source of narrative voice. Tools classify; the gmPrompt tells the GM how to speak.
+
+   For each game tool, write a section explaining:
    - When to use it (narrative trigger, not mechanical rule)
    - What to ask the player before calling it
-   - How to narrate each outcome tier (the tool provides the tier, the GM provides the fiction)
-   - Any special results and what they mean narratively
+   - **How to narrate each outcome tier** — 2–4 sentences per tier, in the game's voice, with concrete examples. The tool only supplies the tier; the GM needs richly-written guidance here because there's nowhere else to get it.
+   - How to interpret \`pressure\`, \`suggested_beats\`, and any game-specific flags the tool returns
+   - Any special results (e.g. L&F's LASER FEELINGS moment) and what they mean narratively
 
-   You will receive a tool inventory with names, descriptions, and parameters. Reference tools by their exact names.
+   You will receive a tool inventory with names, descriptions, and parameters. Reference tools by their exact names. Do NOT assume the tool's result includes prose — it won't. You are writing the prose.
 
 4. **GM Principles** — The source material's guidance on how to run the game. "Play to find out what happens," "Telegraph before striking," "Ask questions and build on answers," etc. Frame these as actionable principles, not abstract philosophy.
 
@@ -89,7 +92,9 @@ The runner harness automatically wraps the gmPrompt with universal behavior for:
 
 **Do NOT duplicate any of that in the gmPrompt.** Don't tell the GM how to greet players, manage sessions, or use the scratchpad.
 
-**Do NOT duplicate mechanical interpretation.** The tools are the single source of truth for how results are interpreted. The gmPrompt should say "when the tool returns a partial success, narrate a cost or complication" — NOT "on a 7-9, the player succeeds but..."
+**Do NOT duplicate mechanical interpretation.** The tools are the single source of truth for the mechanical tier (success / partial / failure / etc.). The gmPrompt should say "when the tool returns \`outcome_tier: partial\`, narrate a cost or complication" — NOT "on a 7-9, the player succeeds but..."
+
+**DO write prose guidance per tier.** Tools no longer ship a \`guidance\` prose field — they emit structured hints only. The gmPrompt is where the "here's how partial success feels in this game" narration guidance lives. Be specific and voice-matched; terse guidance produces flat narration.
 
 ### Character Creation
 

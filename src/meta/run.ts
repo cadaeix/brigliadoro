@@ -112,6 +112,7 @@ async function main() {
   // Create runner directory structure
   fs.mkdirSync(path.join(runnerDir, "tools"), { recursive: true });
   fs.mkdirSync(path.join(runnerDir, "tests"), { recursive: true });
+  fs.mkdirSync(path.join(runnerDir, "evals"), { recursive: true });
   fs.mkdirSync(path.join(runnerDir, "lore"), { recursive: true });
   fs.mkdirSync(path.join(runnerDir, "state"), { recursive: true });
 

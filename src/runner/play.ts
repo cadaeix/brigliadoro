@@ -13,7 +13,7 @@ import * as path from "node:path";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { buildGMSystemPrompt } from "./lib/runner/gm-prompt-template.js";
-import { createScratchpadTool } from "./lib/runner/scratchpad-tool.js";
+import { createGMMemoryTools } from "./lib/runner/gm-memory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -81,12 +81,12 @@ async function main() {
   const serverModule = await import("./tools/server.js");
   const gameServer = serverModule.createGameServer();
 
-  // Create scratchpad server
+  // Create GM memory server (scratchpad + typed books for NPCs, factions, character sheets)
   const stateDir = path.join(__dirname, "state");
-  const scratchpadServer = createSdkMcpServer({
+  const gmToolsServer = createSdkMcpServer({
     name: "gm-tools",
     version: "1.0.0",
-    tools: [createScratchpadTool(stateDir)],
+    tools: createGMMemoryTools(stateDir),
   });
 
   // Load lore summary
@@ -125,7 +125,7 @@ async function main() {
     systemPrompt,
     mcpServers: {
       [gameServer.name]: gameServer,
-      "gm-tools": scratchpadServer,
+      "gm-tools": gmToolsServer,
     },
     model: "sonnet",
     permissionMode: "bypassPermissions" as const,
