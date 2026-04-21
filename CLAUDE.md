@@ -47,10 +47,10 @@ The system has two major phases, both implemented as Claude Agent SDK agent conf
 This is the core architectural pattern:
 
 1. **Primitives** — pure mechanical operations, hand-written TypeScript: `rollDice()`, `drawRandom()`, `trackResource()`, `advanceClock()`. Clean, obvious API surface so generated code can call them reliably.
-2. **Generated game tools** — bespoke MCP tools that the Brigliadoro agent writes per game. Each wraps one or more primitives and encodes: narrative trigger condition, which primitive(s) to call, how to classify the result into a structured hint vocabulary (outcome_tier, pressure, salient_facts, suggested_beats), what structured flags to expose. Example: a PbtA "Lash Out" tool calls `rollDice("2d6")`, adds the stat modifier, classifies tiers (6-/7-9/10+), emits hints — no prose.
+2. **Generated game tools** — bespoke MCP tools that the Brigliadoro agent writes per game. Each wraps one or more primitives and encodes: narrative trigger condition, which primitive(s) to call, how to classify the result into a structured hint vocabulary (outcome_tier, pressure, salient_facts, suggested_beats), what structured flags to expose. Example: a PbtA-style move tool calls `rollDice("2d6")`, adds a stat modifier, classifies outcome tiers (6-/7-9/10+), emits hints — no prose.
 3. **The facilitator agent** — operates at the fiction layer only. Picks tools by narrative context ("the player is intimidating someone → call `lash_out`"), sees only the structured hint output, never raw dice math. Prose voice comes from the per-game facilitatorPrompt (written by the characterizer), not from tools.
 
-This scales across game types: dice games wrap the dice primitive, Dread wraps a tension/Jenga primitive, diceless games wrap resource tracking, etc.
+This scales across game types: dice games wrap the dice primitive, tension-mechanic games wrap a Jenga-or-similar primitive, diceless games wrap resource tracking, etc.
 
 ### Phase 1: Brigliadoro (Tool/Lore Creation)
 
@@ -70,7 +70,7 @@ A **runner** is a generated directory containing everything needed to play a spe
 - `config.json` with facilitatorPrompt, character/setup creation
 - State directory (`state/`) holding scratchpad + typed memory books (`npcs.json`, `factions.json`, `character-sheets.json`) + session-id pointer
 
-Runners are shareable (e.g., push to GitHub). Shorthand: "Honey Heist runner", "Ars Magica runner".
+Runners are shareable (e.g., push to GitHub) as long as the source material's licensing permits.
 
 - **The facilitator agent** uses the generated MCP tools + memory books + knowledge base to run the game
 - Player interaction via the terminal play harness (readline); skinned HTML/CSS UI later
@@ -114,10 +114,10 @@ Model selection rationale: Opus for decisions requiring taste and narrative judg
 
 ## Roadmap
 
-- **Hard sourcebook stress test** — one-page RPGs are easy mode. Real test is Shadowrun (famously poor layout) or Nobilis (unconventional mechanics + lore intermixed). This is the bar for "actually works"
+- **Hard sourcebook stress test** — one-page RPGs are easy mode. The real test is a densely-laid-out rules-heavy game, or one with unconventional mechanics and lore intermixed in prose. This is the bar for "actually works"
 - **Lore distillation** — succinct summary always in context + greppable deeper lore for lookups (currently only `lore/summary.json`)
 - **Facilitator agent quality** — narrative theory, facilitation principles (PbtA-derived but role-neutral), smooth conversational style, session zero for player calibration + safety tools
-- **GMless-game empirical validation** — generate a runner for Microscope, Fiasco, or Belonging Outside Belonging and confirm the facilitator framing holds in real play
+- **GMless-game empirical validation** — generate a runner for a shared-authorship / no-GM game and confirm the facilitator framing holds in real play
 - **Multi-model topology** — `--models quality` preset exists (Opus orchestrator + characterizer, Haiku validator) but hasn't been benchmarked
 - **Pack A/B generator tightening** — `outcome_tier` required on all tool returns (even binary), forbid pre-composed prose like `full_description`, shared hint types in `lib/hints/`
 - **Player-facing UI** — skinnable HTML/CSS replacing the terminal readline
