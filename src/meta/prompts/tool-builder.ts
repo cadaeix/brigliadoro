@@ -63,13 +63,27 @@ In \`evals/\`:
 
 7. **Use SessionStore for persistent state.** If the game tracks resources, conditions, or inventories across tool calls, inject \`SessionStore\` into the tool factory.
 
-8. **Pausable tools for mid-resolution player input.** Most mechanics are one-shot: the facilitator calls the tool, it resolves in one pass, the facilitator narrates the outcome. But some mechanics need input from the player DURING resolution — blackjack (hit/stand between card draws), push-your-luck rolls, choose-a-consequence moves. Those use the **pausable pattern** (see the "Pausable tools" section of the API reference):
+8. **Pausable tools are MANDATORY for mechanics requiring mid-resolution player input.** Most mechanics are one-shot: the facilitator calls the tool, it resolves in one pass, the facilitator narrates the outcome. But some mechanics are not complete without a player contribution made DURING resolution — a question the player asks, a choice between continuing or stopping, a fact the player declares, a target they name. Those use the **pausable pattern** (see the "Pausable tools" section of the API reference):
    - The handler accepts a \`phase: "start" | "continue"\` parameter and a \`stepId\`.
    - The pure function is a step function \`(state, input, rng) => step\` where \`step\` is either \`{ kind: "awaiting", state, prompt }\` or \`{ kind: "done", state, result }\`.
    - State persists across turns via a \`StepStore\` injected into the factory.
-   - the facilitator calls with \`phase: "start"\`, sees \`awaiting_input\`, asks the player conversationally, then calls again with \`phase: "continue"\`.
+   - The facilitator calls with \`phase: "start"\`, sees \`awaiting_input\`, asks the player conversationally, then calls again with \`phase: "continue"\` once the player responds.
 
-   **Decision rule:** if the mechanic resolves in a single primitive call, use the one-shot pattern. If it has a "between" step that needs player input, use the pausable pattern. When in doubt, one-shot is simpler — don't use pausable as a reflex.
+   **Decision rule (strict):** if a correct resolution of the mechanic REQUIRES something from the player that cannot be known ahead of time — a question, a choice between branches, a named target, a declared fact — that mechanic MUST be pausable. Do NOT implement it as a flag on a one-shot tool's return that the facilitator is supposed to read and handle ("if flag X, then prompt the player"). Flags get silently absorbed into narration; a pausable tool structurally forces the pause. Player-input-required mechanics are not optional prompts; they're part of the mechanic's completion.
+
+   Examples that MUST be pausable:
+   - PbtA-style "10+: ask the player a question" moves — the question is the resolution.
+   - Insight / laser-feelings / psychic-clarity moments where the player gets a free question or free answer.
+   - Hit-or-stand, push-your-luck, keep-or-reroll choices where the player decides mid-resolution.
+   - Scene-framing moves where the player names a detail ("describe someone you trust here", "name a complication").
+   - Any move whose rules include "the player chooses X" or "the player declares Y" at any step of resolution.
+
+   Examples that can stay one-shot:
+   - Pure dice resolution: "roll 2d6, interpret tiers" — no player input during resolution, just narrate the outcome.
+   - Damage application, resource tracking, clock advancement — mechanical bookkeeping with no mid-resolution branching.
+   - Random-table generators — pure generators with no player choice in the loop.
+
+   Rule of thumb: if the sourcebook's description of the mechanic contains the phrase "the player" (makes a choice / asks / declares / chooses) as part of the RESOLUTION, it's pausable. If the sourcebook only says "the player" in describing when the mechanic is triggered, it's one-shot.
 
 ## File Patterns
 

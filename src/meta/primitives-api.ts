@@ -389,14 +389,39 @@ it("dealt cards match direct primitive draws for seeded sequences", () => {
 
 ### When to use this pattern
 
-Use the pausable pattern when a mechanic needs mid-resolution player input.
-Do NOT use it for one-shot mechanics (roll 2d6, interpret outcome, done) —
-that's overkill. One-shot tools use the simple pattern from the MCP Tool
-Pattern section above.
+**The pausable pattern is MANDATORY** for any mechanic whose correct
+resolution REQUIRES something from the player mid-resolution — a question
+they ask, a choice between branches, a fact they declare, a target they
+name. Do NOT implement such mechanics as a flag on a one-shot tool's
+return that the facilitator is supposed to read and handle ("if flag X
+is true, ask the player Y"). Flags get absorbed into narration and the
+mandatory player prompt silently disappears. A pausable tool structurally
+forces the pause.
 
-Rule of thumb: if the mechanic has a "between" — between the first draw
-and the second, between the attack roll and the defence roll — it's
-probably pausable. If it resolves in one \`rollDice\` call, it's one-shot.
+**Mandatory pausable examples**:
+- PbtA-style "10+: ask the player a question" moves — the question IS the
+  resolution, not post-hoc flavour.
+- Insight / laser-feelings / psychic-clarity moments that grant the player
+  a free question or a free answer.
+- Hit-or-stand, push-your-luck, keep-or-reroll choices where the player
+  decides mid-resolution.
+- Scene-framing moves where the player names a detail ("describe someone
+  you trust here", "name a complication").
+- Any move whose rules use phrases like "the player chooses X" or "the
+  player declares Y" at any step of resolution.
+
+**One-shot is fine for**:
+- Pure dice resolution ("roll 2d6, interpret tiers") — no player input
+  during resolution.
+- Damage application, resource tracking, clock advancement.
+- Random-table generators — pure generators with no player choice.
+- Mechanics where "player input" means triggering conditions, not
+  resolution-time contributions.
+
+Rule of thumb: if the sourcebook's description of the mechanic contains
+"the player" (asks / declares / chooses / names) as part of the RESOLUTION,
+it's pausable. If the sourcebook only mentions "the player" in describing
+WHEN the mechanic triggers, it's one-shot.
 
 ## Hint vocabulary (tool outputs)
 
