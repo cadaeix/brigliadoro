@@ -45,22 +45,44 @@ function stripMcpPrefix(rawName: string): string {
 }
 
 /**
- * Build a short hint for a tool-call indicator line. Picks the most identifying
- * field from common shapes (name / description / operation / threat) and
- * truncates. Returns "" if nothing fits.
+ * Build a short hint for a tool-call indicator line. Picks the most
+ * identifying field from common tool-arg shapes and truncates. Falls back
+ * to `phase` / `action` (pausable tools) and `kind` / `type` (discriminated
+ * unions) so indicator lines stay informative for control-flow-heavy tools.
+ *
+ * When multiple informative fields are present (e.g. a pausable tool call
+ * with both `phase: "continue"` and `action: "hit"`), shows both separated
+ * by a bullet.
+ *
+ * Returns "" if nothing short and human-readable can be extracted.
  */
 function summariseToolInput(input: unknown): string {
   if (!input || typeof input !== "object") return "";
   const i = input as Record<string, unknown>;
-  const pick = (k: string): string | null => {
+  const pickStr = (k: string): string | null => {
     const v = i[k];
     return typeof v === "string" && v ? v : null;
   };
-  const headline =
-    pick("name") ?? pick("description") ?? pick("operation") ?? pick("threat") ?? "";
-  if (!headline) return "";
+  // "Primary" fields that identify WHAT entity/action the tool is working on.
+  const primary =
+    pickStr("name") ??
+    pickStr("description") ??
+    pickStr("threat") ??
+    pickStr("operation") ??
+    null;
+  // "Control" fields that identify HOW the tool call is operating. Shown
+  // alongside primary when both are present (e.g. memory-book upserts +
+  // name), or on their own for pausable / discriminated-union tools.
+  const control = pickStr("phase") ?? pickStr("action") ?? pickStr("kind") ?? pickStr("type") ?? null;
+
+  const parts: string[] = [];
+  if (primary) parts.push(primary);
+  if (control) parts.push(control);
+  if (parts.length === 0) return "";
+
   const max = 60;
-  const truncated = headline.length > max ? headline.slice(0, max) + "…" : headline;
+  const joined = parts.join(" · ");
+  const truncated = joined.length > max ? joined.slice(0, max) + "…" : joined;
   return ` ${JSON.stringify(truncated)}`;
 }
 
