@@ -1,5 +1,5 @@
 /**
- * Scratchpad MCP tool — persistent notes for the GM agent.
+ * Scratchpad MCP tool — persistent notes for the facilitator agent.
  *
  * Operations:
  * - read: Read the entire scratchpad
@@ -22,7 +22,7 @@ export function createScratchpadTool(stateDir: string) {
 
   return tool(
     "scratchpad",
-    "Read or write your GM scratchpad — persistent notes for tracking plot threads, NPC states, session plans, player preferences, and anything else you want to remember across sessions. Use this proactively: write notes at session start/end, when important things happen, and whenever you'll want to recall something later. Read it when you need context about the story so far.",
+    "Read or write your scratchpad — persistent freeform markdown notes for tracking plot threads, session plans, player mood, vibes, and anything else you want to remember across sessions. Use this proactively: write at session start/end, when important things happen, and whenever you'll want to recall something later. Read when you need context about the story so far. For named entities (NPCs, factions, PCs) use the dedicated books instead.",
     {
       operation: z
         .enum(["read", "write", "append"])

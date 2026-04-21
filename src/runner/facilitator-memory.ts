@@ -1,11 +1,11 @@
 /**
- * GM memory surfaces — scratchpad + typed books.
+ * Facilitator memory surfaces — scratchpad + typed books.
  *
- * Bundles the four memory tools the GM agent uses to remember across
- * sessions: the existing freeform scratchpad plus three typed books for
- * named entities (NPCs, factions, the PC(s)).
+ * Bundles the four memory tools the facilitator agent uses to remember
+ * across sessions: the existing freeform scratchpad plus three typed books
+ * for named entities (NPCs, factions, the PC(s)).
  *
- * Registered in play.ts as the "gm-tools" MCP server.
+ * Registered in play.ts as the "facilitator" MCP server.
  */
 import { z } from "zod";
 import { createScratchpadTool } from "./scratchpad-tool.js";
@@ -105,7 +105,7 @@ const characterSheetsShape = {
   notes: notesField,
 } as const;
 
-export function createGMMemoryTools(stateDir: string) {
+export function createFacilitatorMemoryTools(stateDir: string) {
   return [
     createScratchpadTool(stateDir),
 

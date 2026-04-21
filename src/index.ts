@@ -35,12 +35,12 @@ export { InMemoryStepStore } from "./state/step-store.js";
 export type { StepStore } from "./state/step-store.js";
 
 // Runner utilities
-export { buildGMSystemPrompt } from "./runner/gm-prompt-template.js";
-export type { GMPromptConfig } from "./runner/gm-prompt-template.js";
+export { buildFacilitatorSystemPrompt } from "./runner/facilitator-prompt-template.js";
+export type { FacilitatorPromptConfig } from "./runner/facilitator-prompt-template.js";
 export { createScratchpadTool } from "./runner/scratchpad-tool.js";
 export { createTypedBookTool } from "./runner/typed-book-tool.js";
 export type { TypedBookOptions } from "./runner/typed-book-tool.js";
-export { createGMMemoryTools } from "./runner/gm-memory.js";
+export { createFacilitatorMemoryTools } from "./runner/facilitator-memory.js";
 
 // Test helpers (deterministic RNGs for differential testing)
 export { seededRng, sequenceRng } from "./test-helpers/index.js";

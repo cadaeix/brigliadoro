@@ -3,7 +3,7 @@
  *
  * This file is copied into each generated runner at build time.
  * It reads config.json, loads the game's MCP server, builds the
- * GM system prompt, and runs an interactive terminal play loop.
+ * facilitator system prompt, and runs an interactive terminal play loop.
  *
  * Usage: npx tsx play.ts
  */
@@ -12,8 +12,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
-import { buildGMSystemPrompt } from "./lib/runner/gm-prompt-template.js";
-import { createGMMemoryTools } from "./lib/runner/gm-memory.js";
+import { buildFacilitatorSystemPrompt } from "./lib/runner/facilitator-prompt-template.js";
+import { createFacilitatorMemoryTools } from "./lib/runner/facilitator-memory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -30,6 +30,76 @@ function promptPlayer(rl: readline.Interface, prompt: string): Promise<string> {
       resolve(answer);
     });
   });
+}
+
+/**
+ * Strip the MCP wrapper prefix `mcp__<server>__` from a tool name so
+ * callers see e.g. "resolve_action" not "mcp__lasers-and-feelings__resolve_action".
+ */
+function stripMcpPrefix(rawName: string): string {
+  const parts = rawName.split("__");
+  if (parts.length >= 3 && parts[0] === "mcp") return parts.slice(2).join("__");
+  return rawName;
+}
+
+/**
+ * Build a short hint for a tool-call indicator line. Picks the most identifying
+ * field from common shapes (name / description / operation / threat) and
+ * truncates. Returns "" if nothing fits.
+ */
+function summariseToolInput(input: unknown): string {
+  if (!input || typeof input !== "object") return "";
+  const i = input as Record<string, unknown>;
+  const pick = (k: string): string | null => {
+    const v = i[k];
+    return typeof v === "string" && v ? v : null;
+  };
+  const headline =
+    pick("name") ?? pick("description") ?? pick("operation") ?? pick("threat") ?? "";
+  if (!headline) return "";
+  const max = 60;
+  const truncated = headline.length > max ? headline.slice(0, max) + "…" : headline;
+  return ` ${JSON.stringify(truncated)}`;
+}
+
+/**
+ * Stream one query turn, printing assistant text to stdout.
+ * Returns the session_id from the result message.
+ */
+async function streamTurn(
+  queryIter: AsyncIterable<Record<string, unknown>>
+): Promise<string> {
+  let sessionId = "";
+
+  for await (const message of queryIter) {
+    if (!("type" in message)) continue;
+
+    if (message.type === "assistant" && "message" in message) {
+      const msg = message.message as { content: Array<Record<string, unknown>> };
+      for (const block of msg.content) {
+        if (block.type === "text" && typeof block.text === "string") {
+          process.stdout.write(block.text);
+        } else if (block.type === "tool_use") {
+          // Dim line showing the tool call so the player (and you,
+          // debugging) can see the memory books and game tools firing
+          // under the narration.
+          const name = stripMcpPrefix(typeof block.name === "string" ? block.name : "");
+          const hint = summariseToolInput(block.input);
+          process.stdout.write(`\n\x1b[2m  ↪ ${name}${hint}\x1b[0m\n`);
+        }
+      }
+    } else if (message.type === "result") {
+      const result = message as { session_id?: string; subtype?: string };
+      sessionId = result.session_id ?? "";
+      if (result.subtype !== "success") {
+        console.error(`\n[Facilitator agent ended with: ${result.subtype}]`);
+      }
+    }
+  }
+
+  // Ensure output ends with newline
+  process.stdout.write("\n");
+  return sessionId;
 }
 
 // ── Save / resume helpers ──────────────────────────────────────────────
@@ -95,76 +165,6 @@ async function confirmPrompt(
   return answer === "y" || answer === "yes";
 }
 
-/**
- * Strip the MCP wrapper prefix `mcp__<server>__` from a tool name so
- * callers see e.g. "resolve_action" not "mcp__lasers-and-feelings__resolve_action".
- */
-function stripMcpPrefix(rawName: string): string {
-  const parts = rawName.split("__");
-  if (parts.length >= 3 && parts[0] === "mcp") return parts.slice(2).join("__");
-  return rawName;
-}
-
-/**
- * Build a short hint for a tool-call indicator line. Picks the most identifying
- * field from common shapes (name / description / operation / threat) and
- * truncates. Returns "" if nothing fits.
- */
-function summariseToolInput(input: unknown): string {
-  if (!input || typeof input !== "object") return "";
-  const i = input as Record<string, unknown>;
-  const pick = (k: string): string | null => {
-    const v = i[k];
-    return typeof v === "string" && v ? v : null;
-  };
-  const headline =
-    pick("name") ?? pick("description") ?? pick("operation") ?? pick("threat") ?? "";
-  if (!headline) return "";
-  const max = 60;
-  const truncated = headline.length > max ? headline.slice(0, max) + "…" : headline;
-  return ` ${JSON.stringify(truncated)}`;
-}
-
-/**
- * Stream one query turn, printing assistant text to stdout.
- * Returns the session_id from the result message.
- */
-async function streamTurn(
-  queryIter: AsyncIterable<Record<string, unknown>>
-): Promise<string> {
-  let sessionId = "";
-
-  for await (const message of queryIter) {
-    if (!("type" in message)) continue;
-
-    if (message.type === "assistant" && "message" in message) {
-      const msg = message.message as { content: Array<Record<string, unknown>> };
-      for (const block of msg.content) {
-        if (block.type === "text" && typeof block.text === "string") {
-          process.stdout.write(block.text);
-        } else if (block.type === "tool_use") {
-          // Dim line showing the tool call so the player (and you,
-          // debugging) can see the memory books and game tools firing
-          // under the narration.
-          const name = stripMcpPrefix(typeof block.name === "string" ? block.name : "");
-          const hint = summariseToolInput(block.input);
-          process.stdout.write(`\n\x1b[2m  ↪ ${name}${hint}\x1b[0m\n`);
-        }
-      }
-    } else if (message.type === "result") {
-      const result = message as { session_id?: string; subtype?: string };
-      sessionId = result.session_id ?? "";
-      if (result.subtype !== "success") {
-        console.error(`\n[GM agent ended with: ${result.subtype}]`);
-      }
-    }
-  }
-
-  // Ensure output ends with newline
-  process.stdout.write("\n");
-  return sessionId;
-}
-
 async function main() {
   // Load runner config
   const configPath = path.join(__dirname, "config.json");
@@ -181,12 +181,12 @@ async function main() {
   const serverModule = await import("./tools/server.js");
   const gameServer = serverModule.createGameServer();
 
-  // Create GM memory server (scratchpad + typed books for NPCs, factions, character sheets)
+  // Create facilitator memory server (scratchpad + typed books for NPCs, factions, character sheets)
   const stateDir = path.join(__dirname, "state");
-  const gmToolsServer = createSdkMcpServer({
-    name: "gm-tools",
+  const facilitatorServer = createSdkMcpServer({
+    name: "facilitator",
     version: "1.0.0",
-    tools: createGMMemoryTools(stateDir),
+    tools: createFacilitatorMemoryTools(stateDir),
   });
 
   // Load lore summary
@@ -197,13 +197,13 @@ async function main() {
     loreSummary = JSON.stringify(lore, null, 2);
   }
 
-  // Build the full GM system prompt
-  const { gmPrompt, characterCreation, shipCreation, ...rest } = config;
+  // Build the full facilitator system prompt
+  const { facilitatorPrompt, characterCreation, shipCreation } = config;
   const additionalCreation: Record<string, unknown> = {};
   if (shipCreation) additionalCreation.shipCreation = shipCreation;
 
-  const systemPrompt = buildGMSystemPrompt({
-    gamePrompt: gmPrompt,
+  const systemPrompt = buildFacilitatorSystemPrompt({
+    gamePrompt: facilitatorPrompt,
     gameName: config.name,
     loreSummary,
     characterCreation,
@@ -240,7 +240,7 @@ async function main() {
     systemPrompt,
     mcpServers: {
       [gameServer.name]: gameServer,
-      "gm-tools": gmToolsServer,
+      facilitator: facilitatorServer,
     },
     model: "sonnet",
     permissionMode: "bypassPermissions" as const,
@@ -300,7 +300,7 @@ async function main() {
     resumeId = undefined;
   }
 
-  // First turn — resume or fresh greeting
+  // First turn
   const firstPrompt =
     firstMode === "resume"
       ? resumePrompt

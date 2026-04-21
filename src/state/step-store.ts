@@ -3,13 +3,13 @@
  *
  * Pausable mechanics — blackjack, card draws that ask hit/stand, resolution
  * systems that prompt the player mid-roll — need to remember their in-progress
- * state across GM Claude turns. The flow:
+ * state across the facilitator turns. The flow:
  *
- *   1. GM calls tool with phase: "start"  → tool stores state keyed by stepId,
+ *   1. Facilitator calls tool with phase: "start"  → tool stores state keyed by stepId,
  *      returns { status: "awaiting_input", stepId, prompt }.
- *   2. GM narrates the situation and asks the player conversationally.
+ *   2. Facilitator narrates the situation and asks the player conversationally.
  *   3. Player responds on their next turn.
- *   4. GM calls tool with phase: "continue", stepId, action → tool reloads
+ *   4. Facilitator calls tool with phase: "continue", stepId, action → tool reloads
  *      state, advances, either stores again (awaiting_input) or deletes
  *      and returns { status: "done", output }.
  *
@@ -29,7 +29,7 @@ export interface StepStore {
 
 /**
  * In-memory StepStore. State lives for the lifetime of the process.
- * If play.ts restarts mid-mechanic, in-progress state is lost — GM Claude
+ * If play.ts restarts mid-mechanic, in-progress state is lost — the facilitator
  * should recognise this (the tool will report no stored state for the
  * stepId) and restart the mechanic with phase: "start".
  */

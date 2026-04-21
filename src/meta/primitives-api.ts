@@ -137,7 +137,7 @@ export function myToolPure(
 export function createMyTool() {
   return tool(
     "tool_name",
-    "Clear description of WHEN GM Claude should use this tool (narrative trigger).",
+    "Clear description of WHEN the facilitator should use this tool (narrative trigger).",
     {
       notation: z.string().describe("Dice notation like '2d6'"),
       optionalParam: z.number().optional().describe("Optional param"),
@@ -145,7 +145,7 @@ export function createMyTool() {
     async (args) => {
       const result = myToolPure(args);
       // Dual-channel output: hints in content, full mechanical record in
-      // structuredContent. NO prose sentences — the GM owns voice.
+      // structuredContent. NO prose sentences — the facilitator owns voice.
       return {
         content: [{
           type: "text" as const,
@@ -207,21 +207,21 @@ any system where a mid-resolution choice changes the outcome.
 
 These tools follow the **re-entrant state-machine pattern**. The tool is
 called multiple times with a \`phase\` parameter; state persists between
-calls via a \`StepStore\`; GM Claude alternates with the player between calls.
+calls via a \`StepStore\`; the facilitator alternates with the player between calls.
 
 ### The flow
 
 \`\`\`
-  1. GM calls tool:  { phase: "start", stepId }
+  1. Facilitator calls tool:  { phase: "start", stepId }
      Tool deals initial state, stores it keyed by stepId, returns
      { status: "awaiting_input", stepId, prompt: "Hit or stand?" }
 
-  2. GM sees awaiting_input → narrates situation, presents the choice
+  2. Facilitator sees awaiting_input → narrates situation, presents the choice
      conversationally to the player. DOES NOT call anything else yet.
 
   3. Player responds: "I'll hit."
 
-  4. GM calls tool:  { phase: "continue", stepId, action: "hit" }
+  4. Facilitator calls tool:  { phase: "continue", stepId, action: "hit" }
      Tool reloads state, advances, either:
        - returns { status: "awaiting_input", ... } (loop to step 2), or
        - returns { status: "done", output: finalResult } (tool deletes stepId)
@@ -229,7 +229,7 @@ calls via a \`StepStore\`; GM Claude alternates with the player between calls.
 
 \`AskUserQuestion\` does NOT work here — the SDK's Claude subprocess has no
 TTY and the tool silently fails. The turn-taking above is what replaces it:
-GM Claude's conversational response IS the ask; player's next message IS
+the facilitator's conversational response IS the ask; player's next message IS
 the answer. No special SDK features needed.
 
 ### Pure step function shape
@@ -278,7 +278,7 @@ return payload. It never does mechanical work itself.
 export function createBlackjack(store: StepStore) {
   return tool(
     "resolve_blackjack",
-    // Description must tell GM Claude about the re-entry protocol.
+    // Description must tell the facilitator about the re-entry protocol.
     "Drive one blackjack round. Call with phase='start' to deal. " +
     "If the result has status='awaiting_input', present the prompt to " +
     "the player conversationally and wait for their reply, then call " +
@@ -354,20 +354,20 @@ probably pausable. If it resolves in one \`rollDice\` call, it's one-shot.
 
 ## Hint vocabulary (tool outputs)
 
-**Tools emit structured hints, never prose sentences.** The GM agent owns
+**Tools emit structured hints, never prose sentences.** The facilitator agent owns
 narrative voice — any prose the tool writes competes with or contradicts the
-gmPrompt's tone guidance. Tool returns are signals; the GM turns them into
+facilitatorPrompt's tone guidance. Tool returns are signals; the facilitator turns them into
 fiction.
 
 ### Required fields
 
-- \`outcome_tier: string\` — game-defined enum (e.g. \`critical | success | partial | failure\` for a PbtA move, \`hit | miss\` for a d20 attack). Pick 2–5 tiers that match the mechanic. The gmPrompt MUST cover how to narrate each tier.
+- \`outcome_tier: string\` — game-defined enum (e.g. \`critical | success | partial | failure\` for a PbtA move, \`hit | miss\` for a d20 attack). Pick 2–5 tiers that match the mechanic. The facilitatorPrompt MUST cover how to narrate each tier.
 
 ### Recommended fields (use when meaningful)
 
 - \`pressure: "falling" | "held" | "rising" | "spiking"\` — how this outcome moves narrative tension. \`spiking\` = sudden jump (crisis triggered, clock filled); \`rising\` = things tightened; \`held\` = situation unchanged; \`falling\` = release or relief.
-- \`salient_facts: string[]\` — short tokens naming concrete state changes the GM must reflect. Use a \`kind:entity:delta\` style where possible: \`"hp:pc:-3"\`, \`"clock:nightfall:+1"\`, \`"resource:torchlight:1"\`, \`"npc:captain_darcy:revealed"\`. 0–5 tokens is plenty; don't dump state snapshots.
-- \`suggested_beats: string[]\` — nudges from a small closed catalog, drawn from: \`complication\`, \`cost\`, \`escalation\`, \`revelation\`, \`opening\`, \`setback\`, \`advantage\`, \`reprieve\`. 0–3 beats per return. These are suggestions, not mandates; the GM picks what fits the fiction.
+- \`salient_facts: string[]\` — short tokens naming concrete state changes the facilitator must reflect. Use a \`kind:entity:delta\` style where possible: \`"hp:pc:-3"\`, \`"clock:nightfall:+1"\`, \`"resource:torchlight:1"\`, \`"npc:captain_darcy:revealed"\`. 0–5 tokens is plenty; don't dump state snapshots.
+- \`suggested_beats: string[]\` — nudges from a small closed catalog, drawn from: \`complication\`, \`cost\`, \`escalation\`, \`revelation\`, \`opening\`, \`setback\`, \`advantage\`, \`reprieve\`. 0–3 beats per return. These are suggestions, not mandates; the facilitator picks what fits the fiction.
 
 ### Game-specific flags
 
@@ -376,7 +376,7 @@ Typed booleans or short strings for mechanic-specific triggers:
 
 ### What tools MUST NOT emit
 
-- **Full sentences describing how to narrate.** "Describe how the action backfires" — no. The gmPrompt says that.
+- **Full sentences describing how to narrate.** "Describe how the action backfires" — no. The facilitatorPrompt says that.
 - **Quoted sourcebook text.** The knowledge base handles lookup.
 - **Voice-carrying adjectives.** "Spectacular success!" injects a tone that may not match the game's voice — emit \`outcome_tier: "critical"\`, \`pressure: "falling"\`, \`suggested_beats: ["advantage"]\` instead.
 - **A \`guidance\` or \`narration\` prose field.** Legacy shape; drop it.
@@ -393,7 +393,7 @@ Typed booleans or short strings for mechanic-specific triggers:
 }
 \`\`\`
 
-The GM reads this and writes prose in the game's voice. A campy game gets a pulpy complication; a grim game gets a terse cost. Same hints, different narration.
+The facilitator reads this and writes prose in the game's voice. A campy game gets a pulpy complication; a grim game gets a terse cost. Same hints, different narration.
 
 ## RNG injection rules
 

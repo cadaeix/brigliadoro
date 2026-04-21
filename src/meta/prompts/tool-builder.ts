@@ -19,7 +19,7 @@ In \`tools/\`:
 
 In \`evals/\`:
 - One \`<tool-file-name>.triggers.json\` per tool file — a trigger-rate eval
-  corpus used to measure whether the tool's description causes the GM agent
+  corpus used to measure whether the tool's description causes the facilitator agent
   to invoke it at the right times. See "Trigger eval file" below.
 
 ## Tool Design Principles
@@ -35,10 +35,10 @@ In \`evals/\`:
    Why: the validator subagent will write differential tests that seed the tool's RNG and the primitive's RNG identically, then assert the raw dice values match. This is only possible if the pure function is importable and takes an RNG.
 
 4. **Dual-channel output.** Tool handlers MUST return both:
-   - \`content: [{ type: "text", text: JSON.stringify(hints) }]\` — structured hints GM Claude reads
+   - \`content: [{ type: "text", text: JSON.stringify(hints) }]\` — structured hints the facilitator reads
    - \`structuredContent: <pure function result>\` — the same structured hints for logging/UI
 
-5. **Tool descriptions are narrative triggers.** The GM agent picks tools by fiction, not by mechanics. Write descriptions like: "Roll when a PC does something risky using technology or science" — not "Roll 2d6 and compare to the character's number."
+5. **Tool descriptions are narrative triggers.** The facilitator agent picks tools by fiction, not by mechanics. Write descriptions like: "Roll when a PC does something risky using technology or science" — not "Roll 2d6 and compare to the character's number."
 
 6. **Tool results are structured hints, NEVER prose.** The output must carry:
    - \`outcome_tier\` — game-defined enum (e.g. \`critical | success | partial | failure\`)
@@ -48,17 +48,17 @@ In \`evals/\`:
    - Raw mechanical record (dice values, totals, cards drawn)
    - Any game-specific typed flags (\`laser_feelings_triggered: true\`, etc.)
 
-   **Forbidden in tool returns**: full sentences, quoted sourcebook text, tonal adjectives like "Spectacular!", any \`guidance\`/\`narration\` prose field. The gmPrompt owns narrative voice — tool prose collides with it. See "Hint vocabulary" in the primitives API reference for the full spec.
+   **Forbidden in tool returns**: full sentences, quoted sourcebook text, tonal adjectives like "Spectacular!", any \`guidance\`/\`narration\` prose field. The facilitatorPrompt owns narrative voice — tool prose collides with it. See "Hint vocabulary" in the primitives API reference for the full spec.
 
-   The GM agent reads the hints and writes prose from them. It should NEVER need to do math, remember mechanical rules, or look up result interpretation tables — but it should ALWAYS be the one writing sentences.
+   The facilitator agent reads the hints and writes prose from them. It should NEVER need to do math, remember mechanical rules, or look up result interpretation tables — but it should ALWAYS be the one writing sentences.
 
 7. **Use SessionStore for persistent state.** If the game tracks resources, conditions, or inventories across tool calls, inject \`SessionStore\` into the tool factory.
 
-8. **Pausable tools for mid-resolution player input.** Most mechanics are one-shot: GM calls the tool, tool resolves in one pass, GM narrates the outcome. But some mechanics need input from the player DURING resolution — blackjack (hit/stand between card draws), push-your-luck rolls, choose-a-consequence moves. Those use the **pausable pattern** (see the "Pausable tools" section of the API reference):
+8. **Pausable tools for mid-resolution player input.** Most mechanics are one-shot: the facilitator calls the tool, it resolves in one pass, the facilitator narrates the outcome. But some mechanics need input from the player DURING resolution — blackjack (hit/stand between card draws), push-your-luck rolls, choose-a-consequence moves. Those use the **pausable pattern** (see the "Pausable tools" section of the API reference):
    - The handler accepts a \`phase: "start" | "continue"\` parameter and a \`stepId\`.
    - The pure function is a step function \`(state, input, rng) => step\` where \`step\` is either \`{ kind: "awaiting", state, prompt }\` or \`{ kind: "done", state, result }\`.
    - State persists across turns via a \`StepStore\` injected into the factory.
-   - GM Claude calls with \`phase: "start"\`, sees \`awaiting_input\`, asks the player conversationally, then calls again with \`phase: "continue"\`.
+   - the facilitator calls with \`phase: "start"\`, sees \`awaiting_input\`, asks the player conversationally, then calls again with \`phase: "continue"\`.
 
    **Decision rule:** if the mechanic resolves in a single primitive call, use the one-shot pattern. If it has a "between" step that needs player input, use the pausable pattern. When in doubt, one-shot is simpler — don't use pausable as a reflex.
 
@@ -87,7 +87,7 @@ export type SuggestedBeat =
   | "opening" | "setback" | "advantage" | "reprieve";
 
 export interface MyToolResult {
-  // Hint vocabulary — the GM reads these and writes prose.
+  // Hint vocabulary — the facilitator reads these and writes prose.
   outcome_tier: OutcomeTier;
   pressure?: Pressure;
   salient_facts?: string[];     // short tokens like "hp:pc:-3", "clock:nightfall:+1"
@@ -129,7 +129,7 @@ export function myToolPure(
 export function createMyTool(/* store: SessionStore */) {
   return tool(
     "tool_name",
-    "Clear description of WHEN the GM should use this tool (narrative trigger)",
+    "Clear description of WHEN the facilitator should use this tool (narrative trigger)",
     {
       paramName: z.string().describe("What this parameter is for"),
       optionalParam: z.number().optional().describe("Optional param"),
@@ -153,8 +153,8 @@ find yourself writing a calculation inside the handler, move it into the
 pure function.
 
 **No prose in returns.** Never add a \`guidance\`, \`narration\`, or \`summary\`
-text field to the result. The GM's system prompt (written by the
-gm-characterizer) carries all tonal and narrative guidance — the tool's
+text field to the result. The facilitator's system prompt (written by the
+characterizer) carries all tonal and narrative guidance — the tool's
 job is to classify and signal, not to describe.
 
 ### server.ts
@@ -188,10 +188,9 @@ export function createGameServer() {
 For each tool file you write (e.g. \`tools/roll-action.ts\`), also write a
 sibling corpus file at \`evals/roll-action.triggers.json\` — a JSON array of
 scene prompts used to measure whether the tool's **description** causes the
-GM agent to invoke it at the right times.
+facilitator agent to invoke it at the right times.
 
-The description is prompt engineering, not documentation: it lives in GM
-Claude's system prompt and steers tool selection. The trigger-eval harness
+The description is prompt engineering, not documentation: it lives in the facilitator agent's system prompt and steers tool selection. The trigger-eval harness
 runs each scene prompt through a Claude agent that has access to all of the
 game's tools, and checks whether the expected tool (or no tool) was called.
 
@@ -223,8 +222,8 @@ Format:
 
 Rules for writing prompts:
 - Write from the **player's** perspective — what the player types at the
-  GM. First-person ("I do X") is natural; short declarative sentences work
-  best. These are NOT GM narrations.
+  facilitator. First-person ("I do X") is natural; short declarative sentences work
+  best. These are NOT facilitator narrations.
 - Keep each prompt 1–2 sentences. Mid-scene is fine — the eval harness
   doesn't need prior context.
 - Positives should cover the full range of fiction the tool targets

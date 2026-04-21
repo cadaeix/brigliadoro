@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { createGMMemoryTools } from "../../src/runner/gm-memory.js";
+import { createFacilitatorMemoryTools } from "../../src/runner/facilitator-memory.js";
 
-describe("createGMMemoryTools", () => {
+describe("createFacilitatorMemoryTools", () => {
   let tmp: string;
 
   beforeEach(() => {
@@ -16,7 +16,7 @@ describe("createGMMemoryTools", () => {
   });
 
   it("returns the four expected memory tools in order", () => {
-    const tools = createGMMemoryTools(tmp);
+    const tools = createFacilitatorMemoryTools(tmp);
     expect(tools.map((t) => t.name)).toEqual([
       "scratchpad",
       "npcs",
@@ -26,7 +26,7 @@ describe("createGMMemoryTools", () => {
   });
 
   it("scratchpad still reads/writes as before", async () => {
-    const [scratchpad] = createGMMemoryTools(tmp);
+    const [scratchpad] = createFacilitatorMemoryTools(tmp);
     const write = await scratchpad!.handler(
       { operation: "write", content: "# Session 1 plan\n\nThe gala heist." },
       {}
@@ -40,7 +40,7 @@ describe("createGMMemoryTools", () => {
   });
 
   it("typed books enforce strict schemas — unknown fields rejected", async () => {
-    const [, npcs] = createGMMemoryTools(tmp);
+    const [, npcs] = createFacilitatorMemoryTools(tmp);
     // `foo` is not in the NPC record shape — zod .strict() should reject it.
     // The SDK validates inputs before the handler is called; we invoke the
     // handler directly here so we bypass that and confirm our handler's own
@@ -60,7 +60,7 @@ describe("createGMMemoryTools", () => {
   });
 
   it("NPC upsert persists to npcs.json", async () => {
-    const [, npcs] = createGMMemoryTools(tmp);
+    const [, npcs] = createFacilitatorMemoryTools(tmp);
     await npcs!.handler(
       {
         operation: "upsert",
@@ -75,7 +75,7 @@ describe("createGMMemoryTools", () => {
   });
 
   it("Factions and character_sheets write to their own files", async () => {
-    const [, , factions, characterSheets] = createGMMemoryTools(tmp);
+    const [, , factions, characterSheets] = createFacilitatorMemoryTools(tmp);
     await factions!.handler(
       {
         operation: "upsert",

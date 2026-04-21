@@ -2,7 +2,7 @@
  * Trigger-rate eval harness.
  *
  * Measures whether a generated runner's tool descriptions successfully steer
- * the GM agent to invoke tools at the right times. For each tool in the
+ * the facilitator agent to invoke tools at the right times. For each tool in the
  * runner, loads its `evals/<name>.triggers.json` corpus, runs each prompt
  * through a one-shot Claude query that has access to the game's MCP server
  * (and only that), captures which tools — if any — were invoked, and reports
@@ -97,7 +97,7 @@ async function loadGameServer(runnerDir: string): Promise<{ name: string; instan
 
 function minimalSystemPrompt(gameName: string): string {
   return [
-    `You are the GM for ${gameName}, running a game for a single player.`,
+    `You are the facilitator for ${gameName}, playing with a single human. This is a trigger-rate eval — the game-specific prompt and the universal template are not loaded; your only job is to decide, based on the tool descriptions below and the player's message, whether to invoke a game tool or respond narratively.`,
     `The player has just sent you a message. Decide what to do:`,
     ``,
     `- If their action calls for a mechanical resolution, invoke the appropriate game tool exactly once.`,

@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { ORCHESTRATOR_PROMPT } from "./prompts/orchestrator.js";
 import { TOOL_BUILDER_PROMPT } from "./prompts/tool-builder.js";
-import { GM_CHARACTERIZER_PROMPT } from "./prompts/gm-characterizer.js";
+import { CHARACTERIZER_PROMPT } from "./prompts/characterizer.js";
 import { VALIDATOR_PROMPT } from "./prompts/validator.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -54,8 +54,8 @@ interface ModelConfig {
   orchestrator: AgentModel;
   /** Tool Builder: writes mechanical TypeScript code. Sonnet's sweet spot. */
   toolBuilder: AgentModel;
-  /** GM Characterizer: captures tone, narrative, play experience. Benefits from taste. */
-  gmCharacterizer: AgentModel;
+  /** Characterizer: captures tone, narrative identity, role framing, play experience. Benefits from taste. */
+  characterizer: AgentModel;
   /** Validator: writes tests, runs them, fixes failures. Mechanical work. */
   validator: AgentModel;
 }
@@ -65,14 +65,14 @@ const MODEL_CONFIGS: Record<string, ModelConfig> = {
   default: {
     orchestrator: "sonnet",
     toolBuilder: "sonnet",
-    gmCharacterizer: "sonnet",
+    characterizer: "sonnet",
     validator: "sonnet",
   },
   /** Opus for judgment calls, Sonnet for code, Haiku for validation. */
   quality: {
     orchestrator: "opus",
     toolBuilder: "sonnet",
-    gmCharacterizer: "opus",
+    characterizer: "opus",
     validator: "haiku",
   },
 };
@@ -157,13 +157,13 @@ async function main() {
   console.log(`\n🎲 Meta-TTRPGinator starting`);
   console.log(`   Source: ${sourcebookPath}`);
   console.log(`   Output: ${runnerDir}`);
-  console.log(`   Models: ${modelPreset} (orchestrator=${models.orchestrator}, tools=${models.toolBuilder}, gm=${models.gmCharacterizer}, validator=${models.validator})\n`);
+  console.log(`   Models: ${modelPreset} (orchestrator=${models.orchestrator}, tools=${models.toolBuilder}, characterizer=${models.characterizer}, validator=${models.validator})\n`);
 
   const prompt = `Read the TTRPG sourcebook at "${sourcebookPath}" and generate a complete runner in the directory "${runnerDir}".
 
 The runner needs:
 1. Game-specific MCP tools in ${runnerDir}/tools/ (delegate to tool-builder)
-2. A config.json with GM prompt, lore, and character creation (delegate to gm-characterizer)
+2. A config.json with facilitatorPrompt, lore, and character creation (delegate to characterizer)
 3. Tests in ${runnerDir}/tests/ that pass (delegate to validator)
 
 Do NOT create play.ts, package.json, lib/, or state/ — these are already set up by the runner harness.
@@ -190,12 +190,12 @@ Follow your orchestration protocol: read the sourcebook, analyze it, then delega
           prompt: TOOL_BUILDER_PROMPT,
           model: models.toolBuilder,
         },
-        "gm-characterizer": {
+        "characterizer": {
           description:
-            "Write GM prompt, character creation config, lore summary, and config.json. Use after tools are built, passing tool names and descriptions.",
+            "Classify the game's facilitator style, then write the facilitator prompt, character creation config, lore summary, and config.json. Use after tools are built, passing tool names and descriptions.",
           tools: ["Read", "Write", "Edit", "Glob", "Grep"],
-          prompt: GM_CHARACTERIZER_PROMPT,
-          model: models.gmCharacterizer,
+          prompt: CHARACTERIZER_PROMPT,
+          model: models.characterizer,
         },
         "validator": {
           description:

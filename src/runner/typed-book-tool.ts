@@ -1,5 +1,5 @@
 /**
- * Typed GM memory "book" — a structured scratchpad for named-entity records.
+ * Typed facilitator memory "book" — a structured scratchpad for named-entity records.
  *
  * Generic factory that produces an MCP tool with list/get/upsert/remove
  * over a single JSON file. Each book (npcs, factions, character_sheets)
@@ -25,7 +25,7 @@ import * as path from "node:path";
 export interface TypedBookOptions<TShape extends z.ZodRawShape> {
   /** MCP tool name, e.g. "npcs". */
   name: string;
-  /** Tool description. This is the trigger surface GM Claude reads — write carefully. */
+  /** Tool description. This is the trigger surface the facilitator reads — write carefully. */
   description: string;
   /** Filename under stateDir. e.g. "npcs.json". */
   filename: string;
