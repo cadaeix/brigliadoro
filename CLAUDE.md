@@ -112,18 +112,25 @@ Model selection rationale: Opus for decisions requiring taste and narrative judg
 - **Open source / Creative Commons** — public-facing examples must use only open-source TTRPG material
 - **Primitives must have a clean API surface** — the tool-builder generates TypeScript code that calls these; a simple, obvious API maximizes code generation success
 
-## Roadmap (Post-MVP)
+## Roadmap
 
-After mechanic adaptation works on simple games:
+- **Hard sourcebook stress test** — one-page RPGs are easy mode. Real test is Shadowrun (famously poor layout) or Nobilis (unconventional mechanics + lore intermixed). This is the bar for "actually works"
+- **Lore distillation** — succinct summary always in context + greppable deeper lore for lookups (currently only `lore/summary.json`)
+- **Facilitator agent quality** — narrative theory, facilitation principles (PbtA-derived but role-neutral), smooth conversational style, session zero for player calibration + safety tools
+- **GMless-game empirical validation** — generate a runner for Microscope, Fiasco, or Belonging Outside Belonging and confirm the facilitator framing holds in real play
+- **Multi-model topology** — `--models quality` preset exists (Opus orchestrator + characterizer, Haiku validator) but hasn't been benchmarked
+- **Pack A/B generator tightening** — `outcome_tier` required on all tool returns (even binary), forbid pre-composed prose like `full_description`, shared hint types in `lib/hints/`
+- **Player-facing UI** — skinnable HTML/CSS replacing the terminal readline
 
-1. **Hard sourcebook stress test** — some TTRPGs are notorious for poor formatting, layout and information organisation
-2. **Lore distillation** — succinct summary always in context + greppable deeper lore for lookups
-3. **Persistent game state** — character sheets, NPCs, factions, world concepts
-4. **Facilitator agent quality** — narrative theory, facilitation principles (PbtA-derived but role-neutral), smooth conversational style, session zero for player calibration + safety tools. GMless-game support validation (generate a runner for Microscope or Fiasco, confirm the facilitator framing holds)
+**Done** (noted because it was on this roadmap): typed memory books for NPCs/factions/character-sheets with file persistence; save/resume across restarts; structured hint vocabulary replacing prose guidance; facilitator framing for broad genre support.
 
 ## Runner Regeneration
 
-Code changes to brigliadoro (primitives, Meta-TTRPGinator prompt, play harness, etc.) may require regenerating existing runners. Delete the old runner directory and re-run `npm run generate`. **Always ask the user before regenerating** — runner generation uses the Claude API and counts against subscription rate limits.
+Code changes to brigliadoro (primitives, prompts, play harness, generator contracts) often need regenerating existing runners to validate the full loop. Delete the old runner directory and re-run `npm run generate`. Regen is cheap — uses subscription rate limits, not paid API — and end-to-end regen catches things hand-patching misses. Default to regen for generator-contract changes. **Do warn** before regen if it would destroy in-progress play state (session-id, scratchpad notes, populated memory books) that the user would want to preserve — that's a data-loss concern, not a cost concern.
+
+## Development rhythm
+
+Commit per discrete feature, not per session. When a pick completes and tests go green, that's a commit-worthy moment. Bundling multiple features into one commit (as happened before a recent 3-way split rebase) creates a mess to untangle later. If multiple changes naturally accumulate, proactively surface "ready to commit?" at the natural breakpoint rather than continuing into the next task.
 
 ## Test Material
 
