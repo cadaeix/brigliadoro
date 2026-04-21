@@ -44,6 +44,10 @@ export interface TranscriptWriter {
    *  is the raw text payload from the MCP tool_result block; usually a
    *  JSON-serialized structuredContent. */
   recordToolResult(name: string, resultText: string): void;
+  /** Append a summary of what a subagent (bookkeeper etc.) did this turn,
+   *  under a `<!-- subagent:<name> -->` marker. Indented to visually
+   *  distinguish specialist work from facilitator narration. */
+  recordSubagentSummary(subagent: string, toolCalls: Array<{ tool: string; args: unknown }>, summary?: string): void;
   /** Call at end of a facilitator turn. Opens the file on first call
    *  (once we have a sessionId) and flushes any buffered content. */
   endFacilitatorTurn(sessionId: string): void;
@@ -71,6 +75,28 @@ export function createTranscriptWriter(stateDir: string): TranscriptWriter {
       fs.appendFileSync(filePath, pending.join(""));
       pending = [];
     }
+  }
+
+  /** Extract an identifying snippet from a tool-call's args for the
+   *  subagent-summary line. Mirrors the inline indicator pattern used for
+   *  facilitator tool calls in play.ts — primary (name/operation) first,
+   *  then a control field (operation/action) if different. */
+  function summariseArgs(args: unknown): string {
+    if (!args || typeof args !== "object") return "";
+    const a = args as Record<string, unknown>;
+    const pick = (k: string): string | null => {
+      const v = a[k];
+      return typeof v === "string" && v ? v : null;
+    };
+    const primary = pick("name") ?? pick("description") ?? null;
+    const operation = pick("operation") ?? null;
+    const parts: string[] = [];
+    if (operation) parts.push(operation);
+    if (primary) parts.push(primary);
+    if (parts.length === 0) return "";
+    const joined = parts.join(" ");
+    const max = 80;
+    return ` ${JSON.stringify(joined.length > max ? joined.slice(0, max) + "…" : joined)}`;
   }
 
   function shortId(sessionId: string): string {
@@ -136,6 +162,20 @@ export function createTranscriptWriter(stateDir: string): TranscriptWriter {
       const truncated =
         rendered.length > max ? rendered.slice(0, max) + "…" : rendered;
       write(`  ← ${truncated}\n\n`);
+    },
+    recordSubagentSummary(subagent, toolCalls, summary) {
+      if (toolCalls.length === 0 && !summary) return;
+      const lines: string[] = [`\n<!-- subagent:${subagent} -->`];
+      for (const call of toolCalls) {
+        const hint = summariseArgs(call.args);
+        lines.push(`- ${call.tool}${hint}`);
+      }
+      if (summary) {
+        const trimmed = summary.trim();
+        if (trimmed) lines.push(`  > ${trimmed.slice(0, 200)}`);
+      }
+      lines.push("");
+      write(lines.join("\n"));
     },
     endFacilitatorTurn(sessionId) {
       if (!filePath && sessionId) {

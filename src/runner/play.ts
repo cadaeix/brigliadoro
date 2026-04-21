@@ -16,6 +16,8 @@ import { buildFacilitatorSystemPrompt } from "./lib/runner/facilitator-prompt-te
 import { createFacilitatorMemoryTools } from "./lib/runner/facilitator-memory.js";
 import { createTranscriptWriter } from "./lib/runner/transcript.js";
 import type { TranscriptWriter } from "./lib/runner/transcript.js";
+import { runBookkeeper } from "./lib/runner/bookkeeper.js";
+import { createSubagentTrace } from "./lib/runner/subagent-trace.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -98,8 +100,9 @@ function summariseToolInput(input: unknown): string {
 async function streamTurn(
   queryIter: AsyncIterable<Record<string, unknown>>,
   transcript: TranscriptWriter
-): Promise<string> {
+): Promise<{ sessionId: string; facilitatorText: string }> {
   let sessionId = "";
+  let facilitatorText = "";
   const toolUseNames = new Map<string, string>();
 
   for await (const message of queryIter) {
@@ -111,6 +114,7 @@ async function streamTurn(
         if (block.type === "text" && typeof block.text === "string") {
           process.stdout.write(block.text);
           transcript.recordFacilitatorChunk(block.text);
+          facilitatorText += block.text;
         } else if (block.type === "tool_use") {
           // Dim line showing the tool call so the player (and you,
           // debugging) can see the memory books and game tools firing
@@ -148,7 +152,7 @@ async function streamTurn(
   // Ensure terminal output ends with newline; flush transcript turn too
   process.stdout.write("\n");
   transcript.endFacilitatorTurn(sessionId);
-  return sessionId;
+  return { sessionId, facilitatorText };
 }
 
 /**
@@ -222,6 +226,22 @@ function clearSessionId(stateDir: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Produce a ≤500-char premise/tone snippet for the bookkeeper's context.
+ * Prefers `config.description` (already crisp, set by the characterizer);
+ * falls back to a truncated head of the lore summary JSON.
+ */
+function buildShortLoreSummary(
+  config: { description?: string; name?: string },
+  loreSummary: string | undefined
+): string {
+  const desc = typeof config.description === "string" ? config.description.trim() : "";
+  if (desc) return desc.length > 500 ? desc.slice(0, 500) + "…" : desc;
+  if (!loreSummary) return "";
+  const stripped = loreSummary.replace(/\s+/g, " ").trim();
+  return stripped.length > 500 ? stripped.slice(0, 500) + "…" : stripped;
 }
 
 async function confirmPrompt(
@@ -323,6 +343,69 @@ async function main() {
   // Transcript logger — per-session markdown file under state/transcripts/.
   const transcript = createTranscriptWriter(stateDir);
 
+  // Subagent trace — per-session JSONL next to the markdown transcript.
+  const subagentTrace = createSubagentTrace(stateDir);
+
+  // Short premise/tone summary we thread into the bookkeeper's context.
+  // The bookkeeper runs on Haiku with a fresh context; it doesn't need full
+  // lore, just enough to recognise setting-appropriate entity types.
+  const loreSummaryShort = buildShortLoreSummary(config, loreSummary);
+
+  // Facilitator-role key used in the bookkeeper's context. Plan: future
+  // config.json schemas may surface this explicitly per-game; for now we
+  // fall back to a neutral default.
+  const facilitatorRole: string =
+    (config.facilitatorRole as string | undefined) ?? "facilitator";
+
+  // Turn counter for bookkeeper trace correlation. Incremented before
+  // each streamTurn call.
+  let turnNumber = 0;
+
+  // Fire-and-track pending bookkeeper invocation. Awaited before the next
+  // facilitator turn (so the books reflect turn N before turn N+1 reads
+  // them) and on /quit / /new / /new-session (so writes land before
+  // we wipe state or exit).
+  let pendingBookkeeper: Promise<void> | null = null;
+
+  function enqueueBookkeeper(input: {
+    turnText: string;
+    turn: number;
+    sessionId: string;
+  }): void {
+    if (!input.turnText.trim() || !input.sessionId) return;
+    pendingBookkeeper = runBookkeeper(
+      {
+        turnText: input.turnText,
+        turn: input.turn,
+        sessionId: input.sessionId,
+        gameContext: {
+          gameName: config.name,
+          facilitatorRole,
+          loreSummaryShort,
+        },
+      },
+      facilitatorServer,
+      subagentTrace
+    )
+      .then((result) => {
+        transcript.recordSubagentSummary(
+          "bookkeeper",
+          result.toolCalls,
+          result.summary
+        );
+      })
+      .catch((err) => {
+        console.error(`\n[bookkeeper] ${(err as Error).message ?? err}`);
+      });
+  }
+
+  async function awaitPendingBookkeeper(): Promise<void> {
+    if (pendingBookkeeper) {
+      await pendingBookkeeper;
+      pendingBookkeeper = null;
+    }
+  }
+
   // Three distinct first-turn prompts for different entry paths.
   const initialPrompt = `The player has just started a new game of ${config.name}. Greet them and begin the session zero flow as described in your instructions.`;
   const resumePrompt = `The player has returned to the game after closing the terminal. Follow your sitting-management protocol: read your scratchpad and \`list\` your npcs/factions/character_sheets books to reorient, then recap briefly (a sentence or two on where we left off) and ask what they want to do next. Don't dump the full memory state — just orient.`;
@@ -386,14 +469,21 @@ async function main() {
     console.log(`[Resuming session ${resumeId.slice(0, 8)}…]\n`);
   }
   transcript.beginSession({ gameName: config.name, mode: firstMode });
-  let sessionId = await streamTurn(
+  turnNumber += 1;
+  const firstResult = await streamTurn(
     query({
       prompt: firstPrompt,
       options: resumeId ? { ...sharedOptions, resume: resumeId } : sharedOptions,
     }),
     transcript
   );
+  let sessionId = firstResult.sessionId;
   writeSessionId(stateDir, sessionId);
+  enqueueBookkeeper({
+    turnText: firstResult.facilitatorText,
+    turn: turnNumber,
+    sessionId,
+  });
 
   // Play loop
   while (true) {
@@ -402,6 +492,8 @@ async function main() {
     const lower = trimmed.toLowerCase();
 
     if (lower === "/quit") {
+      // Let pending bookkeeper writes land before we exit.
+      await awaitPendingBookkeeper();
       console.log("\n[Thanks for playing!]");
       break;
     }
@@ -416,36 +508,54 @@ async function main() {
         console.log("[Cancelled.]");
         continue;
       }
+      // Flush in-flight writes before wiping state so we don't race the
+      // bookkeeper writing into files we're about to delete.
+      await awaitPendingBookkeeper();
       const removed = clearAllState(stateDir);
       console.log(
         `\n[Wiped: ${removed.length > 0 ? removed.join(", ") : "nothing to wipe"}]\n`
       );
       transcript.resetForNewSession();
       transcript.beginSession({ gameName: config.name, mode: "initial" });
-      sessionId = await streamTurn(
+      turnNumber = 1;
+      const res = await streamTurn(
         query({
           prompt: initialPrompt,
           options: sharedOptions,
         }),
         transcript
       );
+      sessionId = res.sessionId;
       writeSessionId(stateDir, sessionId);
+      enqueueBookkeeper({
+        turnText: res.facilitatorText,
+        turn: turnNumber,
+        sessionId,
+      });
       continue;
     }
 
     if (lower === "/new-session") {
+      await awaitPendingBookkeeper();
       clearSessionId(stateDir);
       console.log("\n[Cleared session-id; world state preserved.]\n");
       transcript.resetForNewSession();
       transcript.beginSession({ gameName: config.name, mode: "fresh-session" });
-      sessionId = await streamTurn(
+      turnNumber += 1;
+      const res = await streamTurn(
         query({
           prompt: freshSessionPrompt,
           options: sharedOptions,
         }),
         transcript
       );
+      sessionId = res.sessionId;
       writeSessionId(stateDir, sessionId);
+      enqueueBookkeeper({
+        turnText: res.facilitatorText,
+        turn: turnNumber,
+        sessionId,
+      });
       continue;
     }
 
@@ -455,8 +565,13 @@ async function main() {
 
     console.log("");
 
+    // Before the facilitator starts reading books for turn N+1, make sure
+    // turn N's bookkeeper has finished writing to them.
+    await awaitPendingBookkeeper();
+
     transcript.recordPlayerInput(input);
-    sessionId = await streamTurn(
+    turnNumber += 1;
+    const res = await streamTurn(
       query({
         prompt: input,
         options: {
@@ -466,7 +581,13 @@ async function main() {
       }),
       transcript
     );
+    sessionId = res.sessionId;
     writeSessionId(stateDir, sessionId);
+    enqueueBookkeeper({
+      turnText: `> ${input}\n\n${res.facilitatorText}`,
+      turn: turnNumber,
+      sessionId,
+    });
   }
 
   rl.close();
