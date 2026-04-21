@@ -11,6 +11,7 @@ export {
   createClock,
   advanceClock,
   reduceClock,
+  rollOnTable,
 } from "./primitives/index.js";
 
 // Types
@@ -24,6 +25,10 @@ export type {
   ClockState,
   ClockOpResult,
   DeckState,
+  Table,
+  TableEntry,
+  TableRollResult,
+  TableRollChainStep,
 } from "./types/index.js";
 
 // MCP server

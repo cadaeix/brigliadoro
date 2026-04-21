@@ -59,6 +59,51 @@ Fisher-Yates shuffle. Returns new array, does not mutate input.
 
 ### coinFlip(rng?): "heads" | "tails"
 
+### rollOnTable<T>(table: Table<T>, rng?): TableRollResult<T>
+
+Roll on a TTRPG-style **random table** — a ranged-entry die roll. Use this when a sourcebook defines a table like:
+
+> Roll 1d20 on Wilderness Encounter:
+> - 1-10: nothing
+> - 11-15: lost traveller
+> - 16-19: brigands
+> - 20: dragon
+
+This is CONCEPTUALLY DISTINCT from \`drawFromPool\` / \`weightedPick\`. Use \`rollOnTable\` when the sourcebook frames the mechanic as "roll Xd Y on the Z table" with explicit ranges. Use \`drawFromPool\` only when you actually have a pool of equivalent entries and pick one at random (e.g. shuffled deck of NPC names).
+
+Table shape:
+\`\`\`typescript
+const table: Table<string> = {
+  name: "Wilderness Encounter",
+  notation: "1d20",
+  entries: [
+    { range: [1, 10], item: "nothing" },
+    { range: [11, 15], item: "lost traveller" },
+    { range: [16, 19], item: "brigands" },
+    { range: [20, 20], item: "dragon" },
+  ],
+};
+\`\`\`
+
+Nested tables are supported via \`rerollOnto\`:
+\`\`\`typescript
+{ range: [16, 19], item: "monster", rerollOnto: monsterSubtable }
+\`\`\`
+The returned \`chain\` carries every step of the reroll sequence.
+
+Returns:
+\`\`\`
+TableRollResult<T>: {
+  table: string,       // first table's name (or notation if unnamed)
+  notation: string,    // first table's dice notation
+  roll: number,        // roll on the first table
+  item: T,             // LEAF item (after all rerolls)
+  chain: Array<{ table, notation, roll, item }>,  // every step
+}
+\`\`\`
+
+Throws if a roll result doesn't fall into any entry's range (gap), or if the reroll chain exceeds depth 10 (circular reference).
+
 ### setResource(entity: string, resource: string, value: number, current?: ResourceState, bounds?: {min?, max?}): ResourceOpResult
 
 Create or overwrite a resource.
@@ -89,7 +134,8 @@ import type {
   DiceRollResult, ParsedDice,
   DrawResult, WeightedPickResult,
   ResourceState, ResourceOpResult,
-  ClockState, ClockOpResult, DeckState
+  ClockState, ClockOpResult, DeckState,
+  Table, TableEntry, TableRollResult, TableRollChainStep
 } from "../lib/types/index.js";
 
 ## MCP Tool Pattern — pure function + thin handler (MANDATORY)
