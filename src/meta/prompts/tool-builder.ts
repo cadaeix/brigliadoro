@@ -41,14 +41,23 @@ In \`evals/\`:
 5. **Tool descriptions are narrative triggers.** The facilitator agent picks tools by fiction, not by mechanics. Write descriptions like: "Roll when a PC does something risky using technology or science" — not "Roll 2d6 and compare to the character's number."
 
 6. **Tool results are structured hints, NEVER prose.** The output must carry:
-   - \`outcome_tier\` — game-defined enum (e.g. \`critical | success | partial | failure\`)
-   - \`pressure\` — \`falling | held | rising | spiking\` (optional but encouraged)
+   - \`outcome_tier\` — **REQUIRED on every tool return, no exceptions.** Game-defined enum:
+     - PbtA-style move: \`critical | success | partial | failure\`
+     - d20 attack: \`hit | miss\` (or with critical: \`critical | hit | miss\`)
+     - Binary helper/assist mechanic: \`success | failure\` — do NOT collapse to \`success: boolean\`. Cross-tool uniformity matters.
+     - Pure random-table generator (rolls on a table, no success/failure concept): \`outcome_tier: "generated"\` as a uniformity tag.
+   - \`pressure\` — from the shared \`Pressure\` type: \`falling | held | rising | spiking\` (optional but encouraged)
    - \`salient_facts\` — short tokens like \`"hp:pc:-3"\`, \`"clock:nightfall:+1"\` (optional, 0–5)
-   - \`suggested_beats\` — nudges from a closed catalog: \`complication | cost | escalation | revelation | opening | setback | advantage | reprieve\` (optional, 0–3)
+   - \`suggested_beats\` — from the shared \`SuggestedBeat\` type: \`complication | cost | escalation | revelation | opening | setback | advantage | reprieve\` (optional, 0–3)
    - Raw mechanical record (dice values, totals, cards drawn)
    - Any game-specific typed flags (\`laser_feelings_triggered: true\`, etc.)
 
-   **Forbidden in tool returns**: full sentences, quoted sourcebook text, tonal adjectives like "Spectacular!", any \`guidance\`/\`narration\` prose field. The facilitatorPrompt owns narrative voice — tool prose collides with it. See "Hint vocabulary" in the primitives API reference for the full spec.
+   **Forbidden in tool returns**:
+   - Full sentences or multi-clause prose
+   - Quoted sourcebook text
+   - Tonal adjectives like "Spectacular!" in any field value
+   - \`guidance\` / \`narration\` / \`summary\` prose fields
+   - **Pre-composed sentence convenience fields** like \`full_description: "\${threat} wants to \${wants_to} the \${the}, which will \${which_will}"\`. Even when assembled by string interpolation from table entries, the resulting sentence has a voice and the facilitator has to actively override it. Return the structured tokens; the facilitator composes. Rule of thumb: if the facilitatorPrompt would have to say "don't read this field verbatim to the player", that field shouldn't exist.
 
    The facilitator agent reads the hints and writes prose from them. It should NEVER need to do math, remember mechanical rules, or look up result interpretation tables — but it should ALWAYS be the one writing sentences.
 

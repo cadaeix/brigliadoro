@@ -361,7 +361,14 @@ fiction.
 
 ### Required fields
 
-- \`outcome_tier: string\` — game-defined enum (e.g. \`critical | success | partial | failure\` for a PbtA move, \`hit | miss\` for a d20 attack). Pick 2–5 tiers that match the mechanic. The facilitatorPrompt MUST cover how to narrate each tier.
+- \`outcome_tier: string\` — game-defined enum, **REQUIRED on every tool return**. No exceptions. Pick 2–5 tiers that match the mechanic. The facilitatorPrompt MUST cover how to narrate each tier.
+  - **PbtA-style move**: \`critical | success | partial | failure\`
+  - **d20 attack or check**: \`hit | miss\` (or with a critical tier: \`critical | hit | miss\`)
+  - **Helper/assist mechanic that's binary**: \`success | failure\`. Even when the mechanic is just "did they help or not", emit \`outcome_tier\` — don't collapse it to \`success: boolean\`. Cross-tool uniformity matters; the facilitator reads the same field on every tool return.
+  - **Pure random-table generator** (rolls on a d6 table with no success/failure notion): use \`outcome_tier: "generated"\` as a uniformity tag. These tools produce content, not outcomes, but the field is still present so every tool has the same interface.
+  - **Other**: coin up whatever enum matches the mechanic, 2–5 values, all lowercase snake-case.
+
+  The contract is: **every tool's return has an \`outcome_tier\` field.** If the mechanic genuinely has no tier concept, use \`"generated"\`. If you find yourself wanting to omit this field, reconsider — the point is uniform interface across every tool in every game.
 
 ### Recommended fields (use when meaningful)
 
@@ -391,7 +398,9 @@ Typed booleans or short strings for mechanic-specific triggers:
 - **Full sentences describing how to narrate.** "Describe how the action backfires" — no. The facilitatorPrompt says that.
 - **Quoted sourcebook text.** The knowledge base handles lookup.
 - **Voice-carrying adjectives.** "Spectacular success!" injects a tone that may not match the game's voice — emit \`outcome_tier: "critical"\`, \`pressure: "falling"\`, \`suggested_beats: ["advantage"]\` instead.
-- **A \`guidance\` or \`narration\` prose field.** Legacy shape; drop it.
+- **A \`guidance\`, \`narration\`, or \`summary\` prose field.** Legacy shape; drop it.
+- **Pre-composed sentence convenience fields** — e.g. \`full_description: "\${threat} wants to \${wants_to} the \${the}"\`. Even when assembled by string interpolation from table entries, the resulting sentence has a voice (capitalisation quirks, connective-word choice, implicit rhythm) that collides with whatever prose the facilitator was going to write. Return the *structured tokens* (\`threat\`, \`wants_to\`, \`the\`, \`which_will\`); the facilitator composes. If the facilitatorPrompt would have to say "don't read this sentence verbatim to the player" about one of your tool's fields, that field shouldn't exist.
+- **Any field that reads as a user-facing string rather than a machine-readable token.** Compound sentences, multi-word English phrases that imply grammar, anything the facilitator would be tempted to copy into narration as-is.
 
 ### Example
 
