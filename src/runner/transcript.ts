@@ -40,6 +40,10 @@ export interface TranscriptWriter {
   recordFacilitatorChunk(chunk: string): void;
   /** Record a tool call being made by the facilitator. */
   recordToolCall(name: string, hint: string): void;
+  /** Record a tool's returned result, for debug visibility. `resultText`
+   *  is the raw text payload from the MCP tool_result block; usually a
+   *  JSON-serialized structuredContent. */
+  recordToolResult(name: string, resultText: string): void;
   /** Call at end of a facilitator turn. Opens the file on first call
    *  (once we have a sessionId) and flushes any buffered content. */
   endFacilitatorTurn(sessionId: string): void;
@@ -112,7 +116,26 @@ export function createTranscriptWriter(stateDir: string): TranscriptWriter {
       write(chunk);
     },
     recordToolCall(name, hint) {
-      write(`\n  ↪ ${name}${hint}\n\n`);
+      // No trailing newline-pair — the result line will append on the next
+      // line below this one, then add its own spacing.
+      write(`\n  ↪ ${name}${hint}\n`);
+    },
+    recordToolResult(_name, resultText) {
+      // Re-serialize JSON compactly if possible; fall back to raw text.
+      let rendered = resultText;
+      try {
+        const parsed = JSON.parse(resultText);
+        rendered = JSON.stringify(parsed);
+      } catch {
+        /* not JSON, use raw */
+      }
+      // Truncate aggressively — most tool returns fit in 500 chars; the rare
+      // verbose one gets a "…" marker. Full payloads aren't needed in the
+      // markdown transcript; we care about outcome_tier, flags, key tokens.
+      const max = 500;
+      const truncated =
+        rendered.length > max ? rendered.slice(0, max) + "…" : rendered;
+      write(`  ← ${truncated}\n\n`);
     },
     endFacilitatorTurn(sessionId) {
       if (!filePath && sessionId) {

@@ -88,14 +88,19 @@ function summariseToolInput(input: unknown): string {
 
 /**
  * Stream one query turn, printing assistant text to stdout and mirroring
- * facilitator text + tool-call indicators to the transcript writer.
- * Returns the session_id from the result message.
+ * facilitator text + tool-call indicators + tool-result payloads to the
+ * transcript writer. Returns the session_id from the result message.
+ *
+ * Tool results arrive in user-role messages keyed by tool_use_id. We maintain
+ * a small id → name map across the turn so result lines can be labelled with
+ * the tool they came back from (e.g. "roll_action → {outcome_tier: ...}").
  */
 async function streamTurn(
   queryIter: AsyncIterable<Record<string, unknown>>,
   transcript: TranscriptWriter
 ): Promise<string> {
   let sessionId = "";
+  const toolUseNames = new Map<string, string>();
 
   for await (const message of queryIter) {
     if (!("type" in message)) continue;
@@ -112,8 +117,23 @@ async function streamTurn(
           // under the narration.
           const name = stripMcpPrefix(typeof block.name === "string" ? block.name : "");
           const hint = summariseToolInput(block.input);
+          const id = typeof block.id === "string" ? block.id : "";
+          if (id) toolUseNames.set(id, name);
           process.stdout.write(`\n\x1b[2m  ↪ ${name}${hint}\x1b[0m\n`);
           transcript.recordToolCall(name, hint);
+        }
+      }
+    } else if (message.type === "user" && "message" in message) {
+      // Tool results arrive in user-role messages as tool_result blocks.
+      // Don't print to stdout (would spam the game view); mirror to transcript.
+      const msg = message.message as { content: Array<Record<string, unknown>> };
+      if (!Array.isArray(msg.content)) continue;
+      for (const block of msg.content) {
+        if (block.type === "tool_result") {
+          const id = typeof block.tool_use_id === "string" ? block.tool_use_id : "";
+          const name = toolUseNames.get(id) ?? "unknown_tool";
+          const resultText = extractToolResultText(block);
+          transcript.recordToolResult(name, resultText);
         }
       }
     } else if (message.type === "result") {
@@ -129,6 +149,29 @@ async function streamTurn(
   process.stdout.write("\n");
   transcript.endFacilitatorTurn(sessionId);
   return sessionId;
+}
+
+/**
+ * Extract the text payload from a tool_result block. MCP tool_results can
+ * carry their content as an array of content blocks (typical) or a raw string.
+ */
+function extractToolResultText(block: Record<string, unknown>): string {
+  const content = block.content;
+  if (Array.isArray(content)) {
+    for (const c of content) {
+      if (
+        c &&
+        typeof c === "object" &&
+        (c as Record<string, unknown>).type === "text" &&
+        typeof (c as Record<string, unknown>).text === "string"
+      ) {
+        return (c as Record<string, unknown>).text as string;
+      }
+    }
+  } else if (typeof content === "string") {
+    return content;
+  }
+  return "";
 }
 
 // ── Save / resume helpers ──────────────────────────────────────────────
