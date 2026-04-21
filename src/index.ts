@@ -44,3 +44,7 @@ export { createFacilitatorMemoryTools } from "./runner/facilitator-memory.js";
 
 // Test helpers (deterministic RNGs for differential testing)
 export { seededRng, sequenceRng } from "./test-helpers/index.js";
+
+// Shared hint vocabulary (Pressure, SuggestedBeat)
+export type { Pressure, SuggestedBeat } from "./hints/index.js";
+export { PRESSURE_VALUES, SUGGESTED_BEAT_VALUES } from "./hints/index.js";

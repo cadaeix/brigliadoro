@@ -365,9 +365,21 @@ fiction.
 
 ### Recommended fields (use when meaningful)
 
-- \`pressure: "falling" | "held" | "rising" | "spiking"\` — how this outcome moves narrative tension. \`spiking\` = sudden jump (crisis triggered, clock filled); \`rising\` = things tightened; \`held\` = situation unchanged; \`falling\` = release or relief.
+- \`pressure: Pressure\` — how this outcome moves narrative tension. \`spiking\` = sudden jump (crisis triggered, clock filled); \`rising\` = things tightened; \`held\` = situation unchanged; \`falling\` = release or relief.
 - \`salient_facts: string[]\` — short tokens naming concrete state changes the facilitator must reflect. Use a \`kind:entity:delta\` style where possible: \`"hp:pc:-3"\`, \`"clock:nightfall:+1"\`, \`"resource:torchlight:1"\`, \`"npc:captain_darcy:revealed"\`. 0–5 tokens is plenty; don't dump state snapshots.
-- \`suggested_beats: string[]\` — nudges from a small closed catalog, drawn from: \`complication\`, \`cost\`, \`escalation\`, \`revelation\`, \`opening\`, \`setback\`, \`advantage\`, \`reprieve\`. 0–3 beats per return. These are suggestions, not mandates; the facilitator picks what fits the fiction.
+- \`suggested_beats: SuggestedBeat[]\` — nudges from a small closed catalog: \`complication\`, \`cost\`, \`escalation\`, \`revelation\`, \`opening\`, \`setback\`, \`advantage\`, \`reprieve\`. 0–3 beats per return. These are suggestions, not mandates; the facilitator picks what fits the fiction.
+
+### Shared hint types — import, don't redeclare
+
+The \`Pressure\` and \`SuggestedBeat\` types are **cross-game shared enums**, defined once in \`src/hints/index.ts\` (copied into each runner as \`lib/hints/index.js\`). Generated tool files MUST import them:
+
+\`\`\`typescript
+import type { Pressure, SuggestedBeat } from "../lib/hints/index.js";
+\`\`\`
+
+Don't redeclare them in each tool file — they're identical across all games, and a drift in one file's redeclaration would break the shared vocabulary silently.
+
+\`OutcomeTier\` stays **local** to each tool because its values are game-specific (e.g. PbtA uses \`critical | success | partial | failure\`; a d20 attack uses \`hit | miss\`; a pure random-table generator uses \`generated\`).
 
 ### Game-specific flags
 

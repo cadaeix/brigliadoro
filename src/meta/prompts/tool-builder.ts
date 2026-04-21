@@ -72,6 +72,8 @@ Each tool file exports a pure function AND a factory function:
 import { z } from "zod";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { rollDice } from "../lib/primitives/index.js";
+// Shared cross-game hint enums — import, never redeclare per tool.
+import type { Pressure, SuggestedBeat } from "../lib/hints/index.js";
 // import { SessionStore } from "../lib/state/session-store.js";  // if stateful
 
 // (1) Typed args + hint-shaped result for the pure function
@@ -80,11 +82,10 @@ export interface MyToolArgs {
   optionalParam?: number;
 }
 
+// OutcomeTier stays LOCAL to each tool — its values are game-specific.
+// For a PbtA-style move, these four are typical; for a d20 attack you
+// might use "hit" | "miss"; for a pure generator use "generated".
 export type OutcomeTier = "critical" | "success" | "partial" | "failure";
-export type Pressure = "falling" | "held" | "rising" | "spiking";
-export type SuggestedBeat =
-  | "complication" | "cost" | "escalation" | "revelation"
-  | "opening" | "setback" | "advantage" | "reprieve";
 
 export interface MyToolResult {
   // Hint vocabulary — the facilitator reads these and writes prose.
