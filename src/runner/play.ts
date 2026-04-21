@@ -33,6 +33,36 @@ function promptPlayer(rl: readline.Interface, prompt: string): Promise<string> {
 }
 
 /**
+ * Strip the MCP wrapper prefix `mcp__<server>__` from a tool name so
+ * callers see e.g. "resolve_action" not "mcp__lasers-and-feelings__resolve_action".
+ */
+function stripMcpPrefix(rawName: string): string {
+  const parts = rawName.split("__");
+  if (parts.length >= 3 && parts[0] === "mcp") return parts.slice(2).join("__");
+  return rawName;
+}
+
+/**
+ * Build a short hint for a tool-call indicator line. Picks the most identifying
+ * field from common shapes (name / description / operation / threat) and
+ * truncates. Returns "" if nothing fits.
+ */
+function summariseToolInput(input: unknown): string {
+  if (!input || typeof input !== "object") return "";
+  const i = input as Record<string, unknown>;
+  const pick = (k: string): string | null => {
+    const v = i[k];
+    return typeof v === "string" && v ? v : null;
+  };
+  const headline =
+    pick("name") ?? pick("description") ?? pick("operation") ?? pick("threat") ?? "";
+  if (!headline) return "";
+  const max = 60;
+  const truncated = headline.length > max ? headline.slice(0, max) + "…" : headline;
+  return ` ${JSON.stringify(truncated)}`;
+}
+
+/**
  * Stream one query turn, printing assistant text to stdout.
  * Returns the session_id from the result message.
  */
@@ -45,10 +75,17 @@ async function streamTurn(
     if (!("type" in message)) continue;
 
     if (message.type === "assistant" && "message" in message) {
-      const msg = message.message as { content: Array<{ type: string; text?: string }> };
+      const msg = message.message as { content: Array<Record<string, unknown>> };
       for (const block of msg.content) {
-        if (block.type === "text" && block.text) {
+        if (block.type === "text" && typeof block.text === "string") {
           process.stdout.write(block.text);
+        } else if (block.type === "tool_use") {
+          // Dim line showing the tool call so the player (and you,
+          // debugging) can see the memory books and game tools firing
+          // under the narration.
+          const name = stripMcpPrefix(typeof block.name === "string" ? block.name : "");
+          const hint = summariseToolInput(block.input);
+          process.stdout.write(`\n\x1b[2m  ↪ ${name}${hint}\x1b[0m\n`);
         }
       }
     } else if (message.type === "result") {
