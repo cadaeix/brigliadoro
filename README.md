@@ -27,27 +27,31 @@ In the future, Brigliadoro will be opinionated, as guided by personal design gui
 
 ### That's a lot of acronyms!
 
-**TTRPG:** Tabletop roleplaying games, involving participating in a collaborative fictional game setting by taking on roles, usually characters in a fictional setting. TTRPGs can be narrative, procedural, improv-focused, simulationist, goal driven, freeform, etc.
-**LLM:** Large Language Model, like Claude
-**Facilitator:** Brigliadoro's umbrella term for the persistent role an agent plays in any TTRPG — holding the procedure, tracking state, framing scenes, adjudicating mechanics. In classic games the facilitator is the **GM** (Game Master), with full narrative authority over the world and NPCs. In GMless games (Microscope, Fiasco, Belonging Outside Belonging) the facilitator is a shared or rotating role with less authority. Brigliadoro picks the right framing per game.
-**GM:** Game Master — the classic facilitator role in traditional TTRPGs, directing goals, narrative, non-player characters, enemies, and other elements.
-**MCP:** Model Context Protocol, or allowing an LLM to use external tools and systems.
+- **TTRPG:** Tabletop roleplaying games, involving participating in a collaborative fictional game setting by taking on roles, usually characters in a fictional setting. TTRPGs can be narrative, procedural, improv-focused, simulationist, goal driven, freeform, etc.
+- **LLM:** Large Language Model, like Claude
+- **Facilitator:** Brigliadoro's umbrella term for the persistent role an agent plays in any TTRPG — holding the procedure, tracking state, framing scenes, adjudicating mechanics. In classic games the facilitator is the **GM** (Game Master), with full narrative authority over the world and NPCs.
+- **GM:** Game Master — the classic facilitator role in traditional TTRPGs, directing goals, narrative, non-player characters, enemies, and other elements.
+- **MCP:** Model Context Protocol, or allowing an LLM to use external tools and systems.
 
 ## Current status
 
-- [x] Foundation primitives (dice, randomness, resources, clocks) with full test coverage
+- [x] Foundation primitives (dice, randomness, resources, clocks, random tables) with full test coverage
 - [x] MCP tool wrappers via Claude Agent SDK
-- [x] Meta-TTRPGinator agent that reads sourcebooks and generates runners
-- [x] Successfully generated a working single page RPG runner (3 game tools, 39 tests, lore, facilitator config)
+- [x] Generator pipeline that reads sourcebooks and produces a self-contained runner (tool-builder → characterizer → validator subagents orchestrated from a sourcebook PDF)
+- [x] Successfully generated a working one-page-RPG runner end-to-end
 - [x] Structured tool-output vocabulary (outcome_tier, pressure, salient_facts, suggested_beats) instead of prose
 - [x] Typed memory books (npcs, factions, character_sheets) + freeform scratchpad with file persistence
-- [x] Facilitator framing that generalizes across GM and GMless games
-- [ ] Lore distillation (summaries + greppable deep lore)
+- [x] Facilitator framing that generalizes across classic-GM and GMless games
+- [x] Pausable-tool pattern for mechanics requiring mid-resolution player input
+- [x] Bookkeeper subagent that owns writes to the typed memory books, freeing the facilitator to focus on narrative
+- [x] Save / resume across terminal sessions, per-session markdown transcript + JSONL subagent trace
+- [ ] Validated GMless-game runner (generate for a shared-authorship / no-GM game)
+- [ ] Stress testing on complex / poorly-formatted sourcebooks
+- [ ] Lore distillation (summaries always in context + greppable deep lore)
 - [ ] Facilitator quality layer (narrative principles, session zero, safety tools)
-- [ ] Validated GMless-game runner (generate for Microscope or Fiasco)
+- [ ] More specialist subagents (continuity-checker, session-recap-writer, etc.)
 - [ ] Player-facing UI... with aesthetic skins for different games
-- [ ] Stress testing on complex/poorly-formatted sourcebooks
-- [ ] Allowing for other LLM agents in both generation and facilitator roles
+- [ ] Benchmarked multi-model topology (Opus for taste, Haiku for validation)
 
 ## Getting started
 
@@ -67,9 +71,12 @@ This creates a `runners/<runner-name>/` directory with generated tools, tests, l
 
 ### Architecture
 
-1. **Primitives** — hand-written, game-agnostic mechanical building blocks (dice rolling, randomness, resource tracking, progress clocks)
-2. **Generated game tools** — bespoke MCP tools that Brigliadoro writes per game, wrapping primitives. Each tool is a pure function + thin MCP handler, emits structured hints (not prose), and ships with a trigger-rate eval corpus
-3. **Facilitator agent** — operates at the fiction layer only, using the generated tools. Its in-game role (GM, Lens, Cardinal, etc.) is chosen per-game by the characterizer
+The guiding split: **mechanics → tools, bookkeeping → specialist subagents, narrative → the facilitator agent.** Each layer owns its concern; the facilitator's attention stays on voice and fiction.
+
+1. **Primitives** — hand-written, game-agnostic mechanical building blocks (dice rolling, randomness, resource tracking, progress clocks, random tables)
+2. **Generated game tools** — bespoke MCP tools Brigliadoro writes per game, wrapping primitives. Each tool is a pure function + thin MCP handler, emits structured hints (not prose), and ships with a trigger-rate eval corpus
+3. **Facilitator agent** — operates at the fiction layer only, using the generated tools. Its in-game role (GM, Lens, Cardinal, or whatever the source material defines) is chosen per-game by the characterizer
+4. **Specialist subagents** — cheap Haiku agents orchestrated at turn boundaries. First instance is the bookkeeper, which owns writes to the typed memory books so the facilitator can focus on narration rather than filing. More specialists (continuity-checker, session-recap-writer) follow the same pattern
 
 ## A note on generated runners
 
