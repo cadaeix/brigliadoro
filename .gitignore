@@ -5,6 +5,7 @@ dist/
 runners/
 test ttrpgs/
 user-project-plan.md
+user-references/
 
 # Build artifacts that may leak into src/
 src/**/*.js
