@@ -38,7 +38,7 @@ function promptPlayer(rl: readline.Interface, prompt: string): Promise<string> {
 
 /**
  * Strip the MCP wrapper prefix `mcp__<server>__` from a tool name so
- * callers see e.g. "resolve_action" not "mcp__lasers-and-feelings__resolve_action".
+ * callers see e.g. "resolve_action" not "mcp__my-game__resolve_action".
  */
 function stripMcpPrefix(rawName: string): string {
   const parts = rawName.split("__");

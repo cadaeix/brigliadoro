@@ -141,7 +141,7 @@ When a tool result includes any of these fields, read them like this:
 
 ## Game-specific flags
 
-Some tools return typed flags specific to the game's mechanics (e.g. \`laser_feelings_triggered: true\`, \`critical_hit: true\`). The game-specific guidance earlier in this prompt tells you what each flag means — follow it.
+Some tools return typed flags specific to the game's mechanics (e.g. \`special_insight_triggered: true\`, \`critical_hit: true\`, \`trigger: "counter-attack"\`). The game-specific guidance earlier in this prompt tells you what each flag means — follow it.
 
 ## What NOT to do
 

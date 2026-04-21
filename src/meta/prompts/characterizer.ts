@@ -81,7 +81,7 @@ The facilitatorPrompt is the **game-specific** part of the facilitator's instruc
 
 ### A. Opening line
 
-"You are the [role name] for [game name]." Then one or two sentences describing what that role is in the fiction and flavour of this specific game. Not "You are the GM"; be specific — "You are the Game Master of Lasers & Feelings, a campy space opera about competent underdogs defending the galaxy."
+"You are the [role name] for [game name]." Then one or two sentences describing what that role is in the fiction and flavour of this specific game. Not "You are the GM"; be specific — lean into the game's particular flavour, tonal register, and the texture of the role as it exists in THIS game. If the source material uses a distinctive name for the facilitator's role (not just "GM"), honour that name.
 
 ### B. Your role in this game (MANDATORY — always include this section)
 
@@ -122,7 +122,7 @@ For each game tool (you'll receive a tool inventory), write a subsection explain
 - What to ask the player before calling it
 - **How to narrate each outcome tier** — 2-4 sentences per tier, in the game's voice, with concrete examples. The tool only supplies the tier; the facilitator needs rich per-tier guidance here because there's nowhere else to get it.
 - How to interpret \`pressure\`, \`suggested_beats\`, and any game-specific flags the tool returns
-- Any special results (e.g. L&F's LASER FEELINGS moment, a crit, a miss-with-followthrough) and what they mean narratively
+- Any special results (a critical, a bonus trigger, a miss-with-followthrough, a game-specific insight moment, etc.) and what they mean narratively
 
 Reference tools by their exact names as provided in the inventory. Do NOT assume the tool's result includes prose — it won't. You are writing the prose.
 

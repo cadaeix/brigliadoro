@@ -90,7 +90,7 @@ async function main() {
 
   if (args.length < 2) {
     console.error("Usage: npx tsx src/meta/run.ts <sourcebook-path> <runner-name> [--models default|quality]");
-    console.error("Example: npx tsx src/meta/run.ts 'test ttrpgs/one page rpgs/lasers_and_feelings_rpg.pdf' lasers-and-feelings");
+    console.error("Example: npx tsx src/meta/run.ts 'test ttrpgs/one page rpgs/my_game.pdf' my-game");
     process.exit(1);
   }
 

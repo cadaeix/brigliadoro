@@ -11,8 +11,8 @@
  * file. The file compiles to dist/hints/index.js and is copied into each
  * runner's lib/hints/ at generation time.
  *
- * See `src/meta/primitives-api.ts` "Hint vocabulary" section for the full
- * contract + usage rules.
+ * See `src/meta/prompts/references/tool-reference.md` "Hint vocabulary"
+ * section for the full contract + usage rules.
  */
 
 /** How this outcome moves narrative tension. */
