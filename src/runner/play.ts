@@ -14,6 +14,8 @@ import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { buildFacilitatorSystemPrompt } from "./lib/runner/facilitator-prompt-template.js";
 import { createFacilitatorMemoryTools } from "./lib/runner/facilitator-memory.js";
+import { createTranscriptWriter } from "./lib/runner/transcript.js";
+import type { TranscriptWriter } from "./lib/runner/transcript.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -63,11 +65,13 @@ function summariseToolInput(input: unknown): string {
 }
 
 /**
- * Stream one query turn, printing assistant text to stdout.
+ * Stream one query turn, printing assistant text to stdout and mirroring
+ * facilitator text + tool-call indicators to the transcript writer.
  * Returns the session_id from the result message.
  */
 async function streamTurn(
-  queryIter: AsyncIterable<Record<string, unknown>>
+  queryIter: AsyncIterable<Record<string, unknown>>,
+  transcript: TranscriptWriter
 ): Promise<string> {
   let sessionId = "";
 
@@ -79,6 +83,7 @@ async function streamTurn(
       for (const block of msg.content) {
         if (block.type === "text" && typeof block.text === "string") {
           process.stdout.write(block.text);
+          transcript.recordFacilitatorChunk(block.text);
         } else if (block.type === "tool_use") {
           // Dim line showing the tool call so the player (and you,
           // debugging) can see the memory books and game tools firing
@@ -86,6 +91,7 @@ async function streamTurn(
           const name = stripMcpPrefix(typeof block.name === "string" ? block.name : "");
           const hint = summariseToolInput(block.input);
           process.stdout.write(`\n\x1b[2m  ↪ ${name}${hint}\x1b[0m\n`);
+          transcript.recordToolCall(name, hint);
         }
       }
     } else if (message.type === "result") {
@@ -97,8 +103,9 @@ async function streamTurn(
     }
   }
 
-  // Ensure output ends with newline
+  // Ensure terminal output ends with newline; flush transcript turn too
   process.stdout.write("\n");
+  transcript.endFacilitatorTurn(sessionId);
   return sessionId;
 }
 
@@ -248,6 +255,9 @@ async function main() {
     tools: [] as string[],
   };
 
+  // Transcript logger — per-session markdown file under state/transcripts/.
+  const transcript = createTranscriptWriter(stateDir);
+
   // Three distinct first-turn prompts for different entry paths.
   const initialPrompt = `The player has just started a new game of ${config.name}. Greet them and begin the session zero flow as described in your instructions.`;
   const resumePrompt = `The player has returned to the game after closing the terminal. Follow your sitting-management protocol: read your scratchpad and \`list\` your npcs/factions/character_sheets books to reorient, then recap briefly (a sentence or two on where we left off) and ask what they want to do next. Don't dump the full memory state — just orient.`;
@@ -310,11 +320,13 @@ async function main() {
   if (resumeId) {
     console.log(`[Resuming session ${resumeId.slice(0, 8)}…]\n`);
   }
+  transcript.beginSession({ gameName: config.name, mode: firstMode });
   let sessionId = await streamTurn(
     query({
       prompt: firstPrompt,
       options: resumeId ? { ...sharedOptions, resume: resumeId } : sharedOptions,
-    })
+    }),
+    transcript
   );
   writeSessionId(stateDir, sessionId);
 
@@ -343,11 +355,14 @@ async function main() {
       console.log(
         `\n[Wiped: ${removed.length > 0 ? removed.join(", ") : "nothing to wipe"}]\n`
       );
+      transcript.resetForNewSession();
+      transcript.beginSession({ gameName: config.name, mode: "initial" });
       sessionId = await streamTurn(
         query({
           prompt: initialPrompt,
           options: sharedOptions,
-        })
+        }),
+        transcript
       );
       writeSessionId(stateDir, sessionId);
       continue;
@@ -356,11 +371,14 @@ async function main() {
     if (lower === "/new-session") {
       clearSessionId(stateDir);
       console.log("\n[Cleared session-id; world state preserved.]\n");
+      transcript.resetForNewSession();
+      transcript.beginSession({ gameName: config.name, mode: "fresh-session" });
       sessionId = await streamTurn(
         query({
           prompt: freshSessionPrompt,
           options: sharedOptions,
-        })
+        }),
+        transcript
       );
       writeSessionId(stateDir, sessionId);
       continue;
@@ -372,6 +390,7 @@ async function main() {
 
     console.log("");
 
+    transcript.recordPlayerInput(input);
     sessionId = await streamTurn(
       query({
         prompt: input,
@@ -379,7 +398,8 @@ async function main() {
           ...sharedOptions,
           resume: sessionId,
         },
-      })
+      }),
+      transcript
     );
     writeSessionId(stateDir, sessionId);
   }
