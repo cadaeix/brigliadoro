@@ -23,6 +23,11 @@ import {
   installSequenceRng,
   parseSequenceArg,
 } from "./lib/runner/seeded-rng.js";
+import {
+  createScriptSource,
+  createStdinSource,
+} from "./lib/runner/player-input.js";
+import type { PlayerInputSource } from "./lib/runner/player-input.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -33,12 +38,8 @@ function createReadline(): readline.Interface {
   });
 }
 
-function promptPlayer(rl: readline.Interface, prompt: string): Promise<string> {
-  return new Promise((resolve) => {
-    rl.question(prompt, (answer) => {
-      resolve(answer);
-    });
-  });
+function promptPlayer(source: PlayerInputSource, prompt: string): Promise<string> {
+  return source.prompt(prompt);
 }
 
 /**
@@ -250,12 +251,12 @@ function buildShortLoreSummary(
 }
 
 async function confirmPrompt(
-  rl: readline.Interface,
+  source: PlayerInputSource,
   question: string,
   defaultYes: boolean
 ): Promise<boolean> {
   const suffix = defaultYes ? "[Y/n]" : "[y/N]";
-  const answer = (await promptPlayer(rl, `${question} ${suffix} `))
+  const answer = (await promptPlayer(source, `${question} ${suffix} `))
     .trim()
     .toLowerCase();
   if (!answer) return defaultYes;
@@ -371,7 +372,18 @@ async function main() {
     `\nType /quit to exit, /new to wipe all state, /new-session for a fresh session (keeps world).\n`
   );
 
-  const rl = createReadline();
+  // Player input source — stdin by default; --player-script=FILE swaps in
+  // a pre-recorded NDJSON script. The play loop is source-agnostic.
+  const scriptArg = argvRaw.find((a) => a.startsWith("--player-script="));
+  const rl = scriptArg ? null : createReadline();
+  const playerSource: PlayerInputSource = scriptArg
+    ? createScriptSource(scriptArg.slice("--player-script=".length).trim())
+    : createStdinSource(rl!);
+  if (scriptArg) {
+    console.log(
+      `[player source: script — reading input from ${scriptArg.slice("--player-script=".length).trim()}]\n`
+    );
+  }
 
   const sharedOptions = {
     systemPrompt,
@@ -487,7 +499,7 @@ async function main() {
       resumeId = undefined;
     }
   } else if (savedId) {
-    const wantResume = await confirmPrompt(rl, "Saved session found. Resume?", true);
+    const wantResume = await confirmPrompt(playerSource, "Saved session found. Resume?", true);
     console.log("");
     if (wantResume) {
       firstMode = "resume";
@@ -532,7 +544,7 @@ async function main() {
 
   // Play loop
   while (true) {
-    const input = await promptPlayer(rl, "\n> ");
+    const input = await promptPlayer(playerSource, "\n> ");
     const trimmed = input.trim();
     const lower = trimmed.toLowerCase();
 
@@ -545,7 +557,7 @@ async function main() {
 
     if (lower === "/new") {
       const confirmed = await confirmPrompt(
-        rl,
+        playerSource,
         "This will wipe ALL state (scratchpad, character sheets, NPCs, factions) and start a new campaign. Continue?",
         false
       );
@@ -635,7 +647,7 @@ async function main() {
     });
   }
 
-  rl.close();
+  await playerSource.close();
 }
 
 main().catch((err) => {
