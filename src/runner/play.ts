@@ -18,6 +18,11 @@ import { createTranscriptWriter } from "./lib/runner/transcript.js";
 import type { TranscriptWriter } from "./lib/runner/transcript.js";
 import { runBookkeeper } from "./lib/runner/bookkeeper.js";
 import { createSubagentTrace } from "./lib/runner/subagent-trace.js";
+import {
+  installSeededRng,
+  installSequenceRng,
+  parseSequenceArg,
+} from "./lib/runner/seeded-rng.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -269,7 +274,48 @@ async function main() {
 
   const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
 
-  // Dynamically import the game server
+  // Parse seed-mode flags early. These monkey-patch Math.random process-
+  // wide so tool primitives become deterministic. Must happen BEFORE the
+  // game server is constructed, in case a tool factory uses RNG at setup.
+  const argvRaw = process.argv.slice(2);
+  const seedArg = argvRaw.find((a) => a.startsWith("--seed="));
+  const sequenceArg = argvRaw.find((a) => a.startsWith("--rng-sequence="));
+  if (seedArg && sequenceArg) {
+    console.error(
+      "Error: --seed and --rng-sequence are mutually exclusive."
+    );
+    process.exit(1);
+  }
+  let seedModeLabel: string | undefined;
+  if (seedArg) {
+    const raw = seedArg.slice("--seed=".length).trim();
+    const n = Number(raw);
+    if (!Number.isFinite(n) || !Number.isInteger(n)) {
+      console.error(
+        `Error: --seed requires an integer value, got: ${raw || "<empty>"}`
+      );
+      process.exit(1);
+    }
+    installSeededRng(n);
+    seedModeLabel = `seed=${n}`;
+    console.log(`[seed mode: ${seedModeLabel} — Math.random is deterministic]`);
+  } else if (sequenceArg) {
+    const raw = sequenceArg.slice("--rng-sequence=".length);
+    try {
+      const values = parseSequenceArg(raw);
+      installSequenceRng(values);
+      seedModeLabel = `scripted (${values.length} values)`;
+      console.log(
+        `[seed mode: ${seedModeLabel} — Math.random cycles through the given values]`
+      );
+    } catch (err) {
+      console.error(`Error: ${(err as Error).message}`);
+      process.exit(1);
+    }
+  }
+
+  // Dynamically import the game server. With seed mode installed above,
+  // any RNG this server touches during construction is already patched.
   const serverModule = await import("./tools/server.js");
   const gameServer = serverModule.createGameServer();
 
@@ -305,11 +351,10 @@ async function main() {
         : undefined,
   });
 
-  // Parse launch flags
-  const args = process.argv.slice(2);
-  const forceNew = args.includes("--new");
-  const forceNewSession = args.includes("--new-session");
-  const forceResume = args.includes("--resume");
+  // Parse session-mode launch flags (seed-mode flags were parsed earlier).
+  const forceNew = argvRaw.includes("--new");
+  const forceNewSession = argvRaw.includes("--new-session");
+  const forceResume = argvRaw.includes("--resume");
   const modeCount = [forceNew, forceNewSession, forceResume].filter(Boolean).length;
   if (modeCount > 1) {
     console.error(
@@ -468,7 +513,7 @@ async function main() {
   if (resumeId) {
     console.log(`[Resuming session ${resumeId.slice(0, 8)}…]\n`);
   }
-  transcript.beginSession({ gameName: config.name, mode: firstMode });
+  transcript.beginSession({ gameName: config.name, mode: firstMode, seedLabel: seedModeLabel });
   turnNumber += 1;
   const firstResult = await streamTurn(
     query({
@@ -516,7 +561,7 @@ async function main() {
         `\n[Wiped: ${removed.length > 0 ? removed.join(", ") : "nothing to wipe"}]\n`
       );
       transcript.resetForNewSession();
-      transcript.beginSession({ gameName: config.name, mode: "initial" });
+      transcript.beginSession({ gameName: config.name, mode: "initial", seedLabel: seedModeLabel });
       turnNumber = 1;
       const res = await streamTurn(
         query({
@@ -540,7 +585,7 @@ async function main() {
       clearSessionId(stateDir);
       console.log("\n[Cleared session-id; world state preserved.]\n");
       transcript.resetForNewSession();
-      transcript.beginSession({ gameName: config.name, mode: "fresh-session" });
+      transcript.beginSession({ gameName: config.name, mode: "fresh-session", seedLabel: seedModeLabel });
       turnNumber += 1;
       const res = await streamTurn(
         query({

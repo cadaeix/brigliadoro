@@ -32,8 +32,9 @@ import * as path from "node:path";
 export type SessionMode = "initial" | "resume" | "fresh-session";
 
 export interface TranscriptWriter {
-  /** Call at session start / after a new-session reset. Sets game name + mode. */
-  beginSession(opts: { gameName: string; mode: SessionMode }): void;
+  /** Call at session start / after a new-session reset. Sets game name,
+   *  mode, and optional seed-mode label shown in the transcript header. */
+  beginSession(opts: { gameName: string; mode: SessionMode; seedLabel?: string }): void;
   /** Record a line of player input (what the human typed). */
   recordPlayerInput(text: string): void;
   /** Record a streamed chunk of facilitator text. */
@@ -59,6 +60,7 @@ export function createTranscriptWriter(stateDir: string): TranscriptWriter {
   const transcriptsDir = path.join(stateDir, "transcripts");
   let gameName = "TTRPG Runner";
   let mode: SessionMode = "initial";
+  let seedLabel: string | undefined;
   let filePath: string | null = null;
   let pending: string[] = [];
 
@@ -111,17 +113,23 @@ export function createTranscriptWriter(stateDir: string): TranscriptWriter {
     const now = new Date().toISOString();
 
     if (!exists) {
+      const seedLine = seedLabel ? `- **Seed mode**: \`${seedLabel}\`\n` : "";
       const header =
         `# ${gameName}\n\n` +
         `- **Session**: \`${sessionId}\`\n` +
-        `- **Started**: ${now}\n\n` +
-        `---\n\n`;
+        `- **Started**: ${now}\n` +
+        seedLine +
+        `\n---\n\n`;
       fs.writeFileSync(p, header);
     } else if (mode === "resume") {
-      fs.appendFileSync(p, `\n---\n\n## Session resumed — ${now}\n\n`);
+      const seedLine = seedLabel ? ` (seed mode: \`${seedLabel}\`)` : "";
+      fs.appendFileSync(p, `\n---\n\n## Session resumed — ${now}${seedLine}\n\n`);
     } else if (mode === "fresh-session") {
-      // New session in an existing world (session-id changed but world kept)
-      fs.appendFileSync(p, `\n---\n\n## Fresh session in existing world — ${now}\n\n`);
+      const seedLine = seedLabel ? ` (seed mode: \`${seedLabel}\`)` : "";
+      fs.appendFileSync(
+        p,
+        `\n---\n\n## Fresh session in existing world — ${now}${seedLine}\n\n`
+      );
     }
     return p;
   }
@@ -130,6 +138,7 @@ export function createTranscriptWriter(stateDir: string): TranscriptWriter {
     beginSession(opts) {
       gameName = opts.gameName;
       mode = opts.mode;
+      seedLabel = opts.seedLabel;
     },
     recordPlayerInput(text) {
       const quoted = text
