@@ -150,6 +150,18 @@ Code changes to brigliadoro (primitives, prompts, play harness, generator contra
 
 Commit per discrete feature, not per session. When a pick completes and tests go green, that's a commit-worthy moment. Bundling multiple features into one commit (as happened before a recent 3-way split rebase) creates a mess to untangle later. If multiple changes naturally accumulate, proactively surface "ready to commit?" at the natural breakpoint rather than continuing into the next task.
 
+## Testing infrastructure (runners)
+
+Two composable hooks exist for non-interactive / deterministic play sessions. Both are independent of the generator; they live in `src/runner/` and ride into every generated runner via the standard copy.
+
+- **Seed mode** — `npm run play -- --seed=N` (or `--rng-sequence=0.1,0.5,…`). Monkey-patches `Math.random` at process start so every game-tool dice primitive is deterministic. Useful for reproducing specific mechanical branches on demand (e.g. forcing a particular outcome tier). Seed is logged in the transcript header for reproducibility. See `C:\Users\Cad\.claude\plans\seed-mode.md`.
+- **Scripted player input** — `npm run play -- --player-script=FILE` reads NDJSON messages one per line and plays them as player turns, returning `/quit` on EOF. Input-only abstraction (`PlayerInputSource`); doesn't care what's producing the messages. Personas / agentic-player frameworks live outside the project (see below).
+
+Compose: `--seed=42 --player-script=./scripts/insight-trigger.ndjson` → a fully deterministic scripted session.
+
+**LLM-as-player and persona frameworks are intentionally OUT of Brigliadoro.** The player-input hook is deliberately generic. Persona prompts, agentic-player runners, eval harnesses, and anecdata scenarios belong in a sister space (user-level prompt frameworks, Claude Code skills, or a separate repo) — not inside the project. Brigliadoro is a facilitator generator; a player-side subsystem would muddle that story.
+
 ## Test Material
 
-`test ttrpgs/` contains reference PDFs and links organized by complexity.
+- `test ttrpgs/` — reference PDFs and links organized by complexity, for the generator to target
+- `test ttrpgs/mechanic test ttrpgs/` — purpose-built CC0 one-page games that isolate specific mechanical patterns. Each game targets one coverage gap (pausable dice-assignment, branch-gated pausable, decreasing clocks, random tables, GMless shared authority, etc.). These are regeneration targets that exercise distinct architectural paths through Brigliadoro. Add more as new patterns need coverage.
