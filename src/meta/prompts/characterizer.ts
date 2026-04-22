@@ -35,6 +35,7 @@ The complete runner configuration:
   "source": "Source attribution (author, year)",
   "license": "CC BY 4.0 or whatever applies",
   "description": "One-line description of the game",
+  "facilitatorRole": "GM",
   "facilitatorPrompt": "The full per-game facilitator system prompt (see below)",
   "characterCreation": {
     "steps": ["Step 1 description", "Step 2 description"],
@@ -46,6 +47,8 @@ The complete runner configuration:
 \`\`\`
 
 Add any additional creation sections as needed (e.g., \`shipCreation\`, \`baseCreation\`, \`settingElements\`). These go as top-level fields alongside \`characterCreation\`.
+
+The \`facilitatorRole\` field MUST match the in-game role name you picked in Axis 4 — the exact word the game uses for the role (e.g. \`"GM"\`, \`"Lens"\`, \`"Cardinal"\`, \`"Alumni Coordinator"\`, \`"Host"\`). It's used by runtime subagents (the bookkeeper and future specialists) as context about who this facilitator is. Use the exact capitalisation the source material uses.
 
 ### 2. \`lore/summary.json\`
 
