@@ -109,6 +109,18 @@ async function main() {
     process.exit(1);
   }
 
+  // Archive any existing runner at this name so we can diff regens against
+  // each other and recover in-progress play state if a regen was unintended.
+  // The archive directory is gitignored (the whole runners/ folder is).
+  if (fs.existsSync(runnerDir)) {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const archiveRoot = path.resolve("runners", "_archive");
+    const archiveDir = path.join(archiveRoot, `${runnerName}-${timestamp}`);
+    fs.mkdirSync(archiveRoot, { recursive: true });
+    fs.renameSync(runnerDir, archiveDir);
+    console.log(`📦 Archived previous runner → ${path.relative(process.cwd(), archiveDir)}`);
+  }
+
   // Create runner directory structure
   fs.mkdirSync(path.join(runnerDir, "tools"), { recursive: true });
   fs.mkdirSync(path.join(runnerDir, "tests"), { recursive: true });
