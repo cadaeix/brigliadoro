@@ -25,6 +25,7 @@ import {
 } from "./lib/runner/seeded-rng.js";
 import {
   createScriptSource,
+  createScriptTailSource,
   createStdinSource,
 } from "./lib/runner/player-input.js";
 import type { PlayerInputSource } from "./lib/runner/player-input.js";
@@ -373,15 +374,33 @@ async function main() {
   );
 
   // Player input source — stdin by default; --player-script=FILE swaps in
-  // a pre-recorded NDJSON script. The play loop is source-agnostic.
+  // a pre-recorded NDJSON script; --player-script-tail=FILE tails the file
+  // for appended lines so an external driver can feed turns live.
   const scriptArg = argvRaw.find((a) => a.startsWith("--player-script="));
-  const rl = scriptArg ? null : createReadline();
+  const scriptTailArg = argvRaw.find((a) =>
+    a.startsWith("--player-script-tail=")
+  );
+  if (scriptArg && scriptTailArg) {
+    console.error(
+      "Specify only one of --player-script=FILE or --player-script-tail=FILE."
+    );
+    process.exit(1);
+  }
+  const rl = scriptArg || scriptTailArg ? null : createReadline();
   const playerSource: PlayerInputSource = scriptArg
     ? createScriptSource(scriptArg.slice("--player-script=".length).trim())
+    : scriptTailArg
+    ? createScriptTailSource(
+        scriptTailArg.slice("--player-script-tail=".length).trim()
+      )
     : createStdinSource(rl!);
   if (scriptArg) {
     console.log(
       `[player source: script — reading input from ${scriptArg.slice("--player-script=".length).trim()}]\n`
+    );
+  } else if (scriptTailArg) {
+    console.log(
+      `[player source: script-tail — tailing ${scriptTailArg.slice("--player-script-tail=".length).trim()} for appended turns]\n`
     );
   }
 

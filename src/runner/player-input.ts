@@ -22,6 +22,12 @@
  *
  * On end-of-script, the source returns "/quit" so the play loop exits
  * cleanly (flushes transcripts, awaits the bookkeeper, closes readline).
+ *
+ * A second file-based variant is `createScriptTailSource`, which polls the
+ * file for new lines after consuming the ones present at start-up. This
+ * lets an external driver (human-in-terminal, Claude Code session, or a
+ * full LLM-player harness) append turns one at a time while the runner is
+ * live. Write a `{ "type": "quit" }` line to end the session cleanly.
  */
 import * as fs from "node:fs";
 import * as readline from "node:readline";
@@ -113,6 +119,100 @@ export function createScriptSource(filePath: string): PlayerInputSource {
       // looks the same as a human-typed session (aids live observation).
       process.stdout.write(`${promptText}${next.text}\n`);
       return next.text;
+    },
+    async close() {
+      // Nothing to clean up for file-based sources.
+    },
+  };
+}
+
+/**
+ * Tail-mode script source. Reads lines from `filePath` as they appear,
+ * polling at `pollMs` intervals (default 400ms). An external driver
+ * appends one NDJSON line per turn; we consume lines in order and block
+ * inside `prompt()` until a new line is available.
+ *
+ * Sentinel lines:
+ *   { "type": "quit" }   — end the session (returns "/quit" to the loop)
+ *
+ * Malformed / unrecognised lines are skipped with a warning, same as
+ * the non-tail variant.
+ */
+export function createScriptTailSource(
+  filePath: string,
+  options: { pollMs?: number } = {}
+): PlayerInputSource {
+  const pollMs = options.pollMs ?? 400;
+
+  if (!fs.existsSync(filePath)) {
+    // Create an empty file so the driver can start appending immediately.
+    fs.writeFileSync(filePath, "");
+  }
+
+  let cursor = 0; // Index of the next line to consume (after filtering empties).
+
+  function readAllLines(): string[] {
+    const raw = fs.readFileSync(filePath, "utf-8");
+    return raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  }
+
+  function parseLine(
+    line: string,
+    lineIndex: number
+  ): { kind: "message"; text: string } | { kind: "quit" } | { kind: "skip" } {
+    let obj: unknown;
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      console.warn(
+        `[player-script-tail] line ${lineIndex + 1}: not valid JSON, skipping: ${line.slice(0, 80)}`
+      );
+      return { kind: "skip" };
+    }
+    if (!obj || typeof obj !== "object") {
+      console.warn(`[player-script-tail] line ${lineIndex + 1}: not an object, skipping`);
+      return { kind: "skip" };
+    }
+    const rec = obj as Record<string, unknown>;
+    if (rec.type === "quit") return { kind: "quit" };
+    if (rec.type !== "message") {
+      console.warn(
+        `[player-script-tail] line ${lineIndex + 1}: unknown type ${JSON.stringify(rec.type)}, skipping`
+      );
+      return { kind: "skip" };
+    }
+    if (typeof rec.text !== "string") {
+      console.warn(
+        `[player-script-tail] line ${lineIndex + 1}: "text" must be a string, skipping`
+      );
+      return { kind: "skip" };
+    }
+    return { kind: "message", text: rec.text };
+  }
+
+  async function waitForNext(): Promise<"quit" | string> {
+    for (;;) {
+      const lines = readAllLines();
+      while (cursor < lines.length) {
+        const parsed = parseLine(lines[cursor]!, cursor);
+        cursor += 1;
+        if (parsed.kind === "quit") return "quit";
+        if (parsed.kind === "message") return parsed.text;
+        // kind === "skip" — advance cursor and look at the next line.
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, pollMs));
+    }
+  }
+
+  return {
+    async prompt(promptText) {
+      const next = await waitForNext();
+      if (next === "quit") {
+        process.stdout.write(`${promptText}/quit\n`);
+        return "/quit";
+      }
+      process.stdout.write(`${promptText}${next}\n`);
+      return next;
     },
     async close() {
       // Nothing to clean up for file-based sources.
