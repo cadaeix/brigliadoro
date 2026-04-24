@@ -35,6 +35,7 @@ Minimum coverage:
 - **Scenario tests per outcome tier** — force each tier with a hand-crafted RNG sequence and assert the interpretation.
 - **Edge cases** — boundary values, optional parameters, special-trigger branches.
 - **Pausable tools** — drive the step sequence start → continue → … and assert state transitions + \`kind\` of each step.
+- **Handler integration for session-touching tools** — if a tool's handler calls \`session.setResource\` / \`session.modifyResource\`, write one thin test that exercises the handler and confirms session state moved. Pure-function tests don't exercise handlers by design, which means wrong signatures, wrong \`(entity, key)\` pairs, or missing persistence calls slip through silently and surface only at play time. See \`src/meta/prompts/references/testing-reference.md#handler-integration-tests\` for the exact pattern.
 
 Exact patterns, seeded RNG helpers, dice-to-RNG-value mapping, and Gate 1 template are in \`src/meta/prompts/references/testing-reference.md\`. Read it when you start; refer back as needed.
 

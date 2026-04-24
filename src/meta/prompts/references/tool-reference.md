@@ -8,9 +8,12 @@ Deep reference for building game tools. The tool-builder prompt points here when
 2. [Tool file pattern](#tool-file-pattern) — pure function + thin handler, dual-channel output
 3. [Server assembly](#server-assembly) — `server.ts` shape, store injection
 4. [Pausable tools](#pausable-tools) — for mechanics that need player input mid-resolution
-5. [Hint vocabulary](#hint-vocabulary) — what tool returns carry
-6. [Trigger eval corpus](#trigger-eval-corpus) — the `.triggers.json` format
-7. [Common anti-patterns](#common-anti-patterns) — things that look right and aren't
+5. [Cross-tool resource pipelines](#cross-tool-resource-pipelines) — when one tool generates a resource another tool consumes
+6. [Cascading and conditional rolls](#cascading-and-conditional-rolls) — chained rolls with dedup / substitution / branching
+7. [Source fidelity for tables and vocabulary](#source-fidelity-for-tables-and-vocabulary) — transcribe, don't re-theme
+8. [Hint vocabulary](#hint-vocabulary) — what tool returns carry
+9. [Trigger eval corpus](#trigger-eval-corpus) — the `.triggers.json` format
+10. [Common anti-patterns](#common-anti-patterns) — things that look right and aren't
 
 ---
 
@@ -371,6 +374,170 @@ The test isn't the specific name of the move — it's whether correct resolution
 
 ---
 
+## Cross-tool resource pipelines
+
+### Why this matters
+
+When several tools in a game touch the same resource — one tool accrues it, another spends it, a third reads its current value — they're implicitly communicating through `SessionStore`. That coordination is invisible in per-tool unit tests: each tool can pass its own tests in isolation while the integration is silently broken. A tool returning "I generated 2 of resource X" is a statement about this call; the session resource for X is the running total across the whole session. These are different things and both need to exist.
+
+The failure mode plays like this: the generating tool returns the per-call delta in its hints and considers its job done. The consuming tool reads the session resource, finds zero, and reports "insufficient." Play-time, nothing works and the tests look green.
+
+### The practice
+
+Any handler that *generates* a shared resource must read the current session value, add the delta, and write the new total. Any handler that *consumes* reads the session value, validates, and writes the decremented total. Both sides must agree on the `(entity, key)` used to index the resource.
+
+<examples>
+<example name="accrue-and-spend pair">
+A game where one tool rolls combat and can trigger a "stress" gain on partial successes, and another tool lets the player spend stress to push a later roll.
+
+The combat tool's handler, after computing the pure result, checks if stress was gained. If so: `const current = session.getResource(pcName, "stress")?.value ?? 0; session.setResource(pcName, "stress", current + delta, {...});`
+
+The push-roll tool's handler reads from the same `(pcName, "stress")`, validates enough is available, and writes the decremented value.
+
+Key shape: the generating tool's return still carries `stress_gained: 1` for the facilitator's narration; the session resource carries the total. Both exist.
+</example>
+
+<example name="multiple-generator single-consumer">
+A game where three different tools can feed a "doom track" — a travel-encounter tool, a failed-investigation tool, and a ritual-interruption tool. A single end-of-scene tool checks the track and triggers apocalypse beats at thresholds.
+
+Each of the three generator handlers does the read-add-write pattern against `("campaign", "doom")`. The checker reads and compares. No generator assumes another generator will do the work.
+
+Key shape: even when the generators are independent, they all agree on the `(entity, key)` and all persist.
+</example>
+
+<example name="resource with a floor consumer">
+A game where damage and healing both touch `(pcName, "hp")`. Damage tool reads current, subtracts, clamps at 0, writes. Heal tool reads current, adds, clamps at max, writes. A status-check tool reads without writing.
+
+Key shape: tools that read-only don't write; tools that mutate always do the full read-mutate-write and apply bounds. Using primitives like `modifyResource` or clamping in the pure function keeps the arithmetic consistent across tools.
+</example>
+</examples>
+
+### A common failure worth naming
+
+Building each tool to pass its own unit tests, noting a resource in the hints of the generating tool, and forgetting that the consuming tool can't see hints — it can only see session state. If you catch yourself thinking "the facilitator will see the marker count in the hint and pass it to the consumer," stop: the consumer's handler never sees hints from a different call. Session state is the only channel.
+
+### Effects inside a single tool's own flow
+
+The pattern above is "tool A writes, tool B reads." But some tools have *branches inside their own logic* that conceptually mutate a resource the same tool is also tracking — a pausable flow where a player mid-resolution selects an option that should decrement something the tool just accrued, a resolution tool where a critical result both adds damage AND grants a bonus-token, a setup tool where one table entry subtracts from a shared pool.
+
+The failure mode is the same shape as the cross-tool case: the branch is visible in the tool's return (as a flag or a salient fact), and the facilitator is expected to *narrate* the effect. But session state doesn't move. Next turn the resource count is wrong in a way only the play session will surface.
+
+Apply the same discipline within a single tool. If the tool's pure function computes "this branch implies resource X changes by N," the handler must `session.setResource` that change before returning. The hint in the return tells the facilitator what to narrate; the session write makes it true.
+
+<example name="pausable tool with a mid-flow 'wipe a resource' option">
+A pausable resolution tool accrues tokens during its flow (N generated from specific dice results). Mid-flow, the player can elect a reward that wipes one of those tokens. The tool's pure function tracks both: accumulated tokens from this call, and whether any wipes were selected.
+
+When the handler's `done` branch returns, it computes the net effect on session state: add the accumulated tokens, subtract the wipes, write the resulting total. *Not* "add the accumulated tokens and trust the facilitator to remember the wipe next turn."
+</example>
+
+The trace: for every mutation the tool's logic conceptually performs on a shared resource — whether at the `done` branch, mid-flow, or in a specific conditional branch — is there a matching `session.setResource` call in the handler before the return?
+
+### The trace you do before handing off
+
+Before you sign off on a game, list every resource name that appears across more than one tool OR that a single tool can both increase and decrease within its own flow. For each: does every branch that conceptually changes it persist? Do all readers use the same `(entity, key)`? Is the shape (scalar / min / max) consistent across writers? If anything's off, fix it before handing off — per-tool tests won't catch it, and the bug will only surface in a real play session.
+
+---
+
+## Cascading and conditional rolls
+
+### Why this matters
+
+Some mechanics chain multiple rolls with rules that govern how one roll affects another: re-rolling when a result is a duplicate, substituting a specific outcome, branching to a different table based on the first result, or modifying the second roll using the first. These rules are part of the mechanic — not narrative colour layered on top of rolls. When they're left for the facilitator to "apply in their narration," they drift across sessions, get forgotten at table-joining moments, or get applied inconsistently by different facilitator agents running the same game. A tool that structurally encodes the rule runs the mechanic the same way every time.
+
+### The practice
+
+When you read a mechanic that involves more than one roll, pause and list the inter-roll rules explicitly. Each rule becomes either a branch in a pure function, a tool parameter, or (if the player must contribute between rolls) a phase in a pausable state machine. Rules you *don't* encode become rules the facilitator improvises — and that's the drift we want to avoid.
+
+<examples>
+<example name="dedup with substitute">
+Source: "Roll 1d8 on the Spirit Court table to determine your patron. Roll 1d8 again on the same table to determine who wronged them. If the second roll matches the first, substitute 'the Sovereign Below' instead."
+
+Shape: a tool that rolls the same table with an `exclude` parameter naming the prior result. In the pure function: roll, compare, substitute if equal, return. The facilitator calls once for the patron (no `exclude`), calls again for the wronging party (passing the patron's result as `exclude`). No narration-driven logic.
+</example>
+
+<example name="conditional branch to another table">
+Source: "Roll 1d20 for the wilderness encounter. On a 17–20, roll 1d8 on the Monstrous Encounters sub-table."
+
+Shape: this is what `rerollOnto` on `Table<T>` entries handles natively — the primary table's 17–20 entry points to the sub-table via `rerollOnto`, and `rollOnTable` returns the leaf entry with the chain recorded. Check the `rollOnTable` primitive section before hand-rolling cascade logic; the primitive probably does it.
+</example>
+
+<example name="dependent modifier from a prior roll">
+Source: "Roll 1d6 for your starting Affliction. The number you rolled is your Weakness score. Then roll 2d6 + Weakness on the Hauntings table to see what follows you."
+
+Shape: a pure function that takes the first roll's result as an input parameter to the second roll. The facilitator calls the first tool, gets a score, passes that score to the next tool as an explicit arg. The dependency is made visible in the tool's signature, not left to the facilitator to remember.
+</example>
+
+<example name="ordered rolls with player input between">
+Source: "Roll 2d6. Show the player the result. If they want, they can spend a Favour to re-roll one die before committing."
+
+Shape: pausable tool. Phase 1: roll, return the dice, pause with `status: awaiting_input` and a prompt. Phase 2: accept the player's decision (re-roll which die, or commit) and resolve. The cascade is modelled as phases, not as two separate tools the facilitator chains by hand.
+</example>
+</examples>
+
+### A common failure worth naming
+
+Encoding the base tables and assuming the facilitator will apply the inter-roll rules when narrating results. The rule might be named in the facilitator prompt, but prose-level reminders don't have the binding strength that a tool signature does. The test: if the rule lives only in the facilitator prompt, can you imagine a plausible turn where the facilitator skips or misapplies it? If yes, move the rule into the tool.
+
+### The characterCreation mirror
+
+When the source has a multi-step setup with inter-roll rules — including dedup, conditional re-rolls, or result-dependent modifiers — the characterizer's `characterCreation.steps` should list each step and name each rule. The tool-builder's `roll_situation` (or whatever name) should expose each step as a distinct shape (table_type, parameter, phase). If the characterCreation lists N steps and the tool only exposes M < N shapes, the facilitator is missing the handles it needs to drive setup; that mismatch is a bug either way.
+
+---
+
+## Source fidelity for tables and vocabulary
+
+### Why this matters
+
+Random-table entries carry the game's voice. When a facilitator rolls in play, the entry text flows directly into the fiction — the player never reads the source, but they feel the wording through the facilitator's narration. Re-themed entries silently replace the designer's voice with yours. The game you generate stops being the game you were given.
+
+Apply this to **every** table you encode — not just the ones whose entries look obviously "flavorful." A d6 list of weapon names, a dry table of weather conditions, and a voicey table of NPC motivations are all source voice. Plain-looking tables often do the most character-establishing work precisely because they're unshowy.
+
+### The practice
+
+When you write a table into TypeScript, keep the source open beside you. Transcribe each entry's wording as closely as TypeScript string literals allow — vocabulary, slang, POV, capitalisation quirks. Don't work from memory; memory improvises. Don't paraphrase for compactness; paraphrase IS improvisation.
+
+<examples>
+<example name="dry mechanical table">
+Source: "Mishaps while climbing (1d6): 1. Rope frays. 2. Handhold crumbles. 3. Equipment slips. 4. Partner's weight shifts. 5. Sudden wind gust. 6. Piton pulls out of rock."
+
+Good: entries are copied verbatim, including parallel phrasing ("something bad happens to a physical object or force") and d6-shape.
+
+Bad: entries are summarised as "1. Rope / 2. Rock / 3. Gear / 4. Partner / 5. Wind / 6. Anchor" — the same semantic domain but losing the source's specificity of cause.
+</example>
+
+<example name="voicey slang table">
+Source: "What the old woman mutters as you pass (1d6): 1. Don't drink the river's water tonight. 2. He was never your father. 3. Three of you leave, two of you come back. 4. The moon owes me. 5. Tell it you're sorry — IT'S LISTENING. 6. [long stare, no words]"
+
+Good: entries preserved verbatim including the ALL-CAPS in entry 5 and the bracketed stage direction in entry 6. The caps and the silence are mechanics — the facilitator will narrate them differently than calm prophetic text.
+
+Bad: "1. A warning about water. 2. A revelation about parentage. 3. A prophecy about a journey. ..." — semantically equivalent, voice-wise a different game entirely.
+</example>
+
+<example name="table with embedded sub-mechanics">
+Source: "On a failed recovery roll, roll 1d8 for complication: 1. Blood loss (-1 HP per round until stabilised). 2. Broken bone (disadvantage on physical rolls). 3. Delirium (GM controls next action). ..."
+
+Good: the mechanical riders stay attached to the entry text — "Blood loss (-1 HP per round until stabilised)" is transcribed as one string, not split into {effect: "Blood loss", rider: "-1 HP..."} unless the surrounding code needs that structure.
+
+Bad: the mechanical riders are dropped as "flavor" and the entries become bare names. The game's consequences disappear.
+</example>
+</examples>
+
+### A common failure worth naming
+
+Transcribing one table faithfully (often the one that looked obviously voiced) and inventing entries for others that looked "generic enough to improvise on." All tables are source-fidelity territory. If you find yourself writing entries you don't recall reading in the source, stop and re-open the source. The difference between "the source said this" and "this seems like what the source would say" is the whole game.
+
+### When adaptation is warranted
+
+Narrow carve-outs only:
+
+- The entry references a physical-medium affordance that can't translate to text chat (pass-the-dice ritual, card-flip-under-the-table). Adapt the affordance; preserve the entry's semantic function.
+- The entry names a person/place/item the source itself never defines. Leave a clearly-labelled placeholder the facilitator fills at play time; don't invent specifics.
+- The source table has genuine internal contradiction (rare). Resolve toward the reading that preserves the mechanic's role.
+
+The test: can you point at the source page and say "the entry I wrote came from here"? If not, you're inventing.
+
+---
+
 ## Hint vocabulary
 
 Tool returns carry structured signals, never prose. The facilitator agent owns narrative voice — any sentence a tool writes competes with the per-game facilitator prompt and usually loses: facilitators either paraphrase it (making the tool's effort wasted) or read it verbatim (overriding the intended tone). So tools classify; facilitators narrate.
@@ -477,3 +644,8 @@ Things that look reasonable and aren't. Most of these come from real regeneratio
 - **Flag instead of pausable.** Tool returns `ask_player_a_question: true` or `player_must_declare_a_bond: true` on a one-shot tool. The flag gets absorbed. If the mechanic requires player input during resolution, it has to be pausable.
 - **`Math.random` in pure function.** Always thread `rng` through. Direct `Math.random` calls kill differential testing and silently produce non-reproducible tests.
 - **Tool description in mechanical terms.** "Roll 2d6 and compare to stat." No — the description steers the facilitator's selection by fiction. Write triggers like "Roll when a PC takes a risky technological action" — what's happening in the story.
+- **Unpersisted resource pipeline.** Tool A generates a resource (markers, stress, shared pot) and returns the count. Tool B consumes the resource from session state. Tool A never writes to session state. Per-tool tests pass; integration fails silently at play. See [Cross-tool resource pipelines](#cross-tool-resource-pipelines).
+- **Unmodeled cascading-roll logic.** The source has chained rolls with dedup / substitution / conditional branching; the tool exposes only the base tables and expects the facilitator to apply the inter-roll rules in narration. The rules drift. See [Cascading and conditional rolls](#cascading-and-conditional-rolls).
+- **Table-entry reframing.** The source has an explicit random table with specific entries; the generated tool swaps those entries for a "cleaner" or "more genre-appropriate" rewrite. The game loses its voice. Transcribe verbatim; see [Source fidelity for tables and vocabulary](#source-fidelity-for-tables-and-vocabulary).
+- **Invented mechanics.** Adding a tool for a mechanic the source doesn't distinguish — a PvP clash when the source just uses the normal resolution, a social-defence system the source never specifies, a specialised tool for a scenario type. Facilitators pick tools by fiction; invented tools create selection ambiguity against the general tool that already handles the case. If you can't point to source text specifying the distinct mechanic, don't build it.
+- **Split mechanic across multiple tools.** Taking one source-level resolution mechanic (an initial roll that optionally continues) and splitting it into two coordinating tools. The facilitator has to thread data between calls and juggle two competing descriptions for the same fictional trigger. Model one mechanic as one tool — pausable if the continuation exists.

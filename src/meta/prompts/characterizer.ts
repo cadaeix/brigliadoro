@@ -164,6 +164,20 @@ The \`characterCreation\` object captures:
 
 If the game has group/shared creation (ship, base, faction, setting elements, shared map), add those as additional fields alongside \`characterCreation\`. For GMless games that don't have PCs in the trad sense but do have setup (Microscope's Palette, Fiasco's setup, BOB's setting elements), populate \`characterCreation\` with whatever initial setup the game requires, and describe it as setup rather than strictly PC creation.
 
+### Cascading or conditional setup rolls
+
+If the source's setup has rolls that interact with each other — "roll table A, roll table B, re-roll table A with the same result replaced by X, then roll table C" — reflect the **full choreography** in \`steps\`. Don't collapse a four-step cascade with inter-roll rules into three abstract steps to keep the list tidy; the facilitator drives setup from this list, and collapsing loses mechanic-significant structure.
+
+For each cascading step, name:
+
+1. The roll (which tool, which \`table_type\` or parameter).
+2. The inter-roll rule, if any (dedup with substitute X, conditional branch on result Y, dependency on a prior roll).
+3. What the player contributes between rolls, if anything.
+
+If the tool-builder modelled the cascade as tool parameters (e.g., an \`exclude\` parameter for dedup, or a dedicated \`table_type\` for the cascaded roll), the setup steps should mirror the tool's shape so the facilitator calls the tool correctly.
+
+If the cascade requires player input mid-sequence, confirm with the tool inventory that the relevant tool is pausable. A non-pausable cascade tool with a "waits for the player" step in narration drifts in play.
+
 ## Important rules
 
 - ALL paths are relative to the runner directory you're given

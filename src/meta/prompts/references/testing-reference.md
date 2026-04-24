@@ -127,12 +127,54 @@ Minimum coverage per tool:
 - **Outcome tiers** — one scenario test per tier (`critical`, `success`, `partial`, `failure` for a PbtA move; `hit` / `miss` for a d20 attack; whatever the tool uses).
 - **Edge cases** — boundary values (dice totaling exactly the tier-threshold), optional parameters, special-trigger branches.
 - **Structured hint fields present** — assert `outcome_tier` is set on every return, and that `pressure` / `salient_facts` / `suggested_beats` match the documented behaviour.
+- **Handler integration** — if the tool's handler mutates a `SessionStore` (any `session.setResource` / `session.modifyResource` / etc. call), one thin test that exercises the handler and verifies session state moved. See [Handler integration tests](#handler-integration-tests).
 
 For pausable tools, also:
 
 - **Step sequence** — drive `start` → `continue` → `continue` → … and assert state transitions at each step.
 - **Awaiting vs done** — assert the `kind` of each step. `awaiting` must come with a non-empty `prompt`; `done` must come with a `result`.
 - **Store interaction** — if you're testing the handler (not just the step function), use an in-memory store and assert it's populated after `awaiting` and deleted after `done`.
+
+---
+
+## Handler integration tests
+
+**Why this exists.** Gate 1 and scenario tests exercise the pure function. They don't exercise the handler's `SessionStore` calls — by design, because pure functions are testable and handlers are thin wrappers. But "thin" doesn't mean "trivially correct": the handler is where session writes happen, and a wrong signature / wrong `(entity, key)` / missing persistence call slips through the pure-function tests entirely. This pattern closes the gap with one small test per stateful tool.
+
+**When to write one.** Any tool whose handler calls `session.setResource` / `session.modifyResource` / similar mutation on a `SessionStore`. Skip when: the tool is stateless (no `SessionStore` injection), or the handler only reads from session state without writing.
+
+**What it looks like.**
+
+```ts
+import { describe, it, expect } from "vitest";
+import { SessionStore } from "../lib/state/session-store.js";
+import { InMemoryStepStore } from "../lib/state/step-store.js";
+import { createMyTool } from "../tools/my-tool.js";
+
+describe("my_tool handler persists to session", () => {
+  it("writes the resource to the expected (entity, key) on done", async () => {
+    const session = new SessionStore();
+    const steps = new InMemoryStepStore(); // only if pausable
+    const tool = createMyTool(steps, session);
+
+    // Drive the handler through whatever sequence reaches the write path.
+    // Use an RNG sequence / known inputs that force a branch where the
+    // tool should persist — e.g. a push that generates 2 markers.
+    // Call the handler via the SDK's invocation shape, or exercise its
+    // async callback directly if the tool factory exposes it testably.
+
+    // After the write branch runs:
+    const resource = session.getResource("expected_entity", "expected_key");
+    expect(resource?.value).toBe(expectedValue);
+  });
+});
+```
+
+**What it catches.** Wrong signature (e.g. 4 args vs. 3 for `setResource`), wrong `(entity, key)` used by the writer vs. the reader, missing `session.setResource` call entirely. These bugs compile fine and pass all pure-function tests; they surface only at play time.
+
+**What it does NOT try to be.** Not a full play simulation, not multi-call integration across tools. Exercise the handler once along one branch that should persist. One such test per stateful tool is enough; the bug class is yes/no per tool, not scenario-dependent.
+
+**For cross-tool pipelines** (tool A writes resource X, tool B reads it), an additional thin test is worth writing: exercise A's handler to populate state, then exercise B's handler and confirm it sees the populated state. This catches the mismatch where A writes `("boss", "markers")` but B reads `("gm", "markers")`.
 
 ## Test-fix loop
 
