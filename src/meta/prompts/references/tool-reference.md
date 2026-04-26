@@ -630,6 +630,33 @@ Rules:
 - If the game has multiple tools, include negatives that should trigger a *different* game tool — that way the corpus measures greediness vs discipline.
 - `note` is free text; include it so the orchestrator and humans can read the corpus.
 
+### Distribution discipline (the hard part)
+
+Hitting the count requirement (≥8 positives) is necessary but not sufficient. **Your positives must sample across the *shape* of trigger cases the tool covers, not cluster on one *flavor* of them.**
+
+Why this matters: the facilitator at play time doesn't reason about the rule that defines when your tool should fire — it pattern-matches against the examples you give it. If all your positives share keywords (specific NPC names, specific equipment, specific locations, specific genre-flavoured situations), the facilitator learns "this tool fires for *that genre*" rather than "this tool fires for *that condition*." Anything outside the genre slice gets missed at play time, and the player has to manually prod the facilitator into rolling.
+
+Concrete failure mode: a "risky action" resolver was tested with 10 positives that all named the same gang's NPCs and equipment (intimidating Selkie, driving the Cadillac, swinging at Mad Dog, etc.). At play time, the facilitator never called the tool when the PC sat down at a friendly poker game and bluffed a stranger — even though that's a textbook risky-uncertain action. The genre keywords had taught the wrong lesson.
+
+### Practice: enumerate before you write
+
+Before drafting positives, list the *categories of trigger* this tool should fire across. For a risky-action resolver in a crime game, that might be:
+
+- physical-violent (combat, intimidation with force)
+- social-deceptive (bluffing, lying, conning, charm offensive)
+- low-stakes-uncertain (gambling, pickpocketing, swiping things, small lies)
+- skilled-under-pressure (lockpicking, fast-driving, hacking)
+- supernatural-perception (reading auras, sensing the wrong)
+- bargaining-with-stakes (negotiating with someone who can hurt you)
+
+Then write at least one positive per category. If a category has no plausible positive in this game's fiction, leave it out — but make the omission deliberate, not accidental.
+
+Mix the genre markers across positives — no two positives should name the same NPC, the same weapon, the same location. Force yourself away from clusters.
+
+### A common failure worth naming
+
+Writing 8-10 positives that all share genre keywords because they were drafted in one breath, from one scene's flavour. Sample across the source's full domain of trigger conditions — not just the slice that's most visually recognisable as "the kind of thing this tool fires for." If a player can describe their action in plain English without using any of your positives' nouns, your positives need broader coverage.
+
 ---
 
 ## Common anti-patterns

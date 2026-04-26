@@ -113,6 +113,10 @@ For each tool file, write \`evals/<tool-name>.triggers.json\` — a JSON array o
 
 Near-misses are the critical signal. Trivial negatives ("write a haiku") test nothing. A near-miss is a scene that sounds adjacent to the tool's domain but shouldn't fire it — a preparation that isn't an action, a low-stakes social beat where a roll would be overkill, a different game tool's territory.
 
+**Distribution matters as much as count.** Before writing positives, list the *categories of trigger* this tool should fire across — physical-violent vs. social-deceptive vs. low-stakes-uncertain vs. skilled-under-pressure vs. supernatural-perception vs. bargaining-with-stakes vs. whatever else the source's fiction admits. Then write at least one positive per category that's plausible in this game.
+
+The failure mode this prevents: 8-10 positives that all share genre keywords (same NPC names, same equipment, same locations, same flavour-of-risk), drafted in one breath from one scene. The facilitator pattern-matches the genre and only fires the tool for that slice of risk-shapes; everything outside the cluster gets missed at play time. **Hitting the count requirement does not save you from this** — it has to be deliberate sampling across the trigger domain. Detail in \`references/tool-reference.md#trigger-eval-corpus\` (the "Distribution discipline" section).
+
 ### Step 7: Assemble \`server.ts\`
 
 Wire all tools into one MCP server. Inject stores (once each) and pass them to the tool factories that need them. Template in \`references/tool-reference.md#server-assembly\`.
@@ -134,6 +138,7 @@ Before handing off, open each tool file and the server and ask:
 9. **No prose in returns?** No \`full_description\`, no \`guidance\`, no \`summary\`. Tokens only.
 10. **Does each description steer by fiction, not by mechanics?** It should read like a narrative trigger, not a rules citation.
 11. **Does each \`evals/*.triggers.json\` have ≥8 positives, ≥8 negatives, ≥2 near-misses?**
+12. **For each tool's positives, do they sample across multiple categories of trigger condition — or do they cluster on one genre / one set of NPCs / one flavour of risk?** List the genre markers in your positives. If they cluster, the corpus will teach the facilitator the genre rather than the trigger condition; risk-shapes outside the cluster will go unrolled at play time. See Step 6 + \`references/tool-reference.md#trigger-eval-corpus\` (the "Distribution discipline" section).
 
 If any of those fail, fix before handing off.
 

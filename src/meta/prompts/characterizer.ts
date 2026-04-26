@@ -129,6 +129,8 @@ For each game tool (you'll receive a tool inventory), write a subsection explain
 
 Reference tools by their exact names as provided in the inventory. Do NOT assume the tool's result includes prose — it won't. You are writing the prose.
 
+**Distribution discipline for "what to ask" examples.** When you give 2-4 example player utterances or facilitator-clarifying-questions to illustrate a tool's trigger condition, **make sure those examples sample across the trigger's actual range — not all from the same genre slice.** A general resolver in a crime game shouldn't have all examples be gang-coded ("Ya bluffin' Selkie?" / "Ya hittin' Mad Dog?" / "Ya drivin' through the roadblock?"); mix in casual / social-stakes / low-stakes scenes that should also fire the tool ("Ya bluffin' the cards or playin' 'em straight?" / "Ya tellin' the truth or makin' it up?" / "Ya tryin' to swipe somethin' off the bar without him noticin'?"). The facilitator at play time pattern-matches against these examples; if they cluster on one flavour, the facilitator will under-call the tool on situations outside that flavour. The tool-builder is told to enforce this distribution at the eval-corpus level (see \`references/tool-reference.md#trigger-eval-corpus\`); your job is the same discipline at the prompt-example level.
+
 ### G. Principles from the source material
 
 The game's guidance on how to run / play / facilitate it. "Play to find out," "Telegraph before striking," "Ask questions and build on answers," "Be a fan of the PCs," etc. Frame as actionable principles, not abstract philosophy. Only include what the source text actually provides — don't invent principles or drift toward generic PbtA advice if the game isn't PbtA.
