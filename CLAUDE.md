@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. New instances of Claude Code are encouraged to read this, read README.md, take a look around the codebase and take a moment to sit with what's going on here.
 
 ## Project Overview
 
@@ -62,7 +62,7 @@ This scales across game types: dice games wrap the dice primitive, tension-mecha
 
 - Reads TTRPG sourcebook PDFs or text input
 - A **tool-builder subagent** generates game-specific tools (layer 2) as TypeScript MCP tool definitions that call the primitives (layer 1), plus a trigger-rate eval corpus per tool. Its system prompt is workflow-shaped (read sourcebook → inventory mechanics → classify one-shot vs pausable → write → review) with deep reference material in `src/meta/prompts/references/tool-reference.md` loaded on demand.
-- Tools support **mid-resolution player input** via the pausable state-machine pattern (phase: "start"/"continue" + StepStore); no AskUserQuestion dependency. The pausable pattern is MANDATORY for any mechanic requiring mid-resolution player input — flags on one-shot tools silently get absorbed into narration.
+- Tools support **mid-resolution player input** via the pausable state-machine pattern (phase: "start"/"continue" + StepStore); no AskUserQuestion dependency. The pausable pattern is the only working shape for mechanics that need mid-resolution player input — flags on one-shot tools silently get absorbed into narration and the mechanic decomposes.
 - A **characterizer subagent** classifies the game's facilitator style (narrative-authority axis, scene-framing axis, facilitator-as-character axis, in-game role name), writes the per-game facilitatorPrompt, lore summary, and character/setup creation config
 - A **validator subagent** auto-generates unit tests for created tools (including Gate 1 differential tests against the primitive oracle); tools must pass before handoff. Deep test patterns live in `src/meta/prompts/references/testing-reference.md`.
 
@@ -124,7 +124,7 @@ Model selection rationale: Opus for decisions requiring taste and narrative judg
 - **Separation of duties (mechanics / bookkeeping / narrative)** — see the Separation of Duties section above. Specialist subagents handle bookkeeping-style work so the facilitator's attention stays on voice and fiction
 - **The facilitator operates at the fiction layer** — resolution primitives are straightforward ground-truth code; the facilitator reads structured hints and writes prose, never raw dice math
 - **Tools emit structured hints, not prose** — `outcome_tier`, `pressure`, `salient_facts`, `suggested_beats` plus raw mechanical record. No `guidance`/`narration` prose fields. The per-game facilitatorPrompt (written by the characterizer) is the single source of narrative voice
-- **Pausable pattern is MANDATORY for mid-resolution player input** — any mechanic whose correct resolution requires something from the player (a question, a choice, a declared fact) uses the state-machine + StepStore pattern. Flags on one-shot tools get absorbed into narration and the mechanic decomposes silently
+- **Pausable pattern is the working shape for mid-resolution player input** — any mechanic whose correct resolution requires something from the player (a question, a choice, a declared fact) uses the state-machine + StepStore pattern. Flags on one-shot tools get absorbed into narration and the mechanic decomposes silently
 - **"Facilitator" is the unified internal role** — classic GM, Lens, Cardinal, Host, etc. are per-game in-game role names. The characterizer picks one per game; the universal code uses "facilitator"
 - **Knowledge base uses glob/grep, not RAG/vector DB** — per Anthropic's own recommendation that agent-driven file exploration outperforms vector search
 - **Clocks are universal** — the facilitator should use clocks/progress meters regardless of whether the source TTRPG includes them
@@ -132,7 +132,7 @@ Model selection rationale: Opus for decisions requiring taste and narrative judg
 - **Terminal-first development** — skinned UI is a later concern; initial testing stays in-terminal. Keep things modular so we can switch over easily
 - **Open source / Creative Commons** — public-facing examples must use only open-source TTRPG material. Avoid proprietary game names in CLAUDE.md, README, commit messages, and prompt examples — PbtA as a framework is fine; specific proprietary titles aren't
 - **Primitives must have a clean API surface** — the tool-builder generates TypeScript code that calls these; a simple, obvious API maximizes code generation success
-- **Subagent prompts use progressive disclosure** — core workflow in the system prompt, deep reference material (signatures, templates, edge cases) in separate markdown files the subagent Reads on demand. Modelled on Anthropic's skill-creator SKILL.md pattern. Explaining *why* (theory-of-mind) generalises better than shouting `MUST` / `NEVER`
+- **Subagent prompts use progressive disclosure** — core workflow in the system prompt, deep reference material (signatures, templates, edge cases) in separate markdown files the subagent Reads on demand. Modelled on Anthropic's skill-creator SKILL.md pattern. Explaining _why_ (theory-of-mind) generalises better than shouting `MUST` / `NEVER`
 
 ## Roadmap
 
@@ -144,7 +144,16 @@ Model selection rationale: Opus for decisions requiring taste and narrative judg
 - **Multi-model topology** — `--models quality` preset exists (Opus orchestrator + characterizer, Haiku validator) but hasn't been benchmarked
 - **Player-facing UI** — skinnable HTML/CSS replacing the terminal readline
 
-**Done** (noted because each was on this roadmap): typed memory books for NPCs/factions/character-sheets with file persistence; save/resume across restarts; structured hint vocabulary replacing prose guidance; facilitator framing for broad genre support; `outcome_tier` required on every tool return with a `"generated"` carve-out for pure content generators; forbidden prose fields (`full_description` etc.); shared hint types in `src/hints/`; pausable pattern MANDATORY for mid-resolution player input; bookkeeper subagent owns writes to typed books; tool-builder prompt restructured workflow-shaped with progressive-disclosure reference files; cross-tool resource pipeline discipline + intra-tool resource effects + cascading/conditional roll guidance + source fidelity for tables (all in tool-reference.md); orchestrator outcome-tier extraction + tool↔characterizer coherence cross-checks + orphan-tool-file detection + verbatim-passing carve-out for fidelity-critical content; trigger-eval corpus distribution discipline (positives must sample across categories of trigger condition, not cluster on one genre); bookkeeper snapshot pre-supply with match-or-create discipline; runner archive on regen; `--player-script-tail` for live turn-by-turn external driving; `--player-preferences` flag for pre-baked session-zero answers; `config.openingMessage` middle-path so the player sees a pre-rendered first impression before any LLM call.
+**Done** (noted because each was on this roadmap, grouped by theme):
+
+- *State + persistence*: typed memory books for NPCs/factions/character-sheets with file persistence; save/resume across restarts; runner archive on regen.
+- *Hint vocabulary contract*: structured hints (`outcome_tier`, `pressure`, `salient_facts`, `suggested_beats`) replacing prose guidance; `outcome_tier` required on every tool return with a `"generated"` carve-out for pure content generators; forbidden prose fields (`full_description` etc.); shared hint types in `src/hints/`.
+- *Facilitator framing*: per-game role classification (axes for narrative authority, scene framing, facilitator-as-character) so a single facilitator agent covers classic-GM, shared-authority, and GMless games; pausable pattern as the working shape for mid-resolution player input.
+- *Bookkeeper subagent*: owns writes to typed books (facilitator reads only); snapshot pre-supply with match-or-create discipline against existing records.
+- *Tool-builder prompt discipline*: workflow-shaped with progressive-disclosure reference files; cross-tool resource pipeline + intra-tool resource effect discipline; cascading/conditional roll guidance; source fidelity for tables (all in tool-reference.md).
+- *Orchestrator discipline*: outcome-tier extraction; tool↔characterizer coherence cross-checks; orphan-tool-file detection; verbatim-passing carve-out for fidelity-critical content.
+- *Eval corpus discipline*: trigger-eval distribution (positives sample across categories of trigger condition, not cluster on one genre).
+- *Testing / harness hooks*: `--player-script-tail` for live turn-by-turn external driving; `--player-preferences` for pre-baked session-zero answers; `config.openingMessage` middle-path so the player sees a pre-rendered first impression before any LLM call.
 
 ## Runner Regeneration
 
@@ -165,7 +174,7 @@ Four composable hooks exist for non-interactive / deterministic play sessions. A
 
 Compose freely: `--seed=42 --player-script-tail=./turns.ndjson --player-preferences=./prefs.md` → a fully deterministic, live-driven, preferences-pinned session.
 
-**LLM-as-player and persona frameworks are intentionally OUT of Brigliadoro.** The player-input hooks are deliberately generic. Persona prompts, agentic-player runners, eval harnesses, and anecdata scenarios belong in a sister space (user-level prompt frameworks, Claude Code skills, or a separate repo) — not inside the project. Brigliadoro is a facilitator generator; a player-side subsystem would muddle that story. Design at `C:\Users\Cad\.claude\plans\brigliadoro-llm-player-harness.md`.
+**LLM-as-player and persona frameworks are deliberately outside Brigliadoro.** The player-input hooks are intentionally generic. Persona prompts, agentic-player runners, eval harnesses, and anecdata scenarios belong in a sister space (user-level prompt frameworks, Claude Code skills, or a separate repo) — not inside the project. Brigliadoro is a facilitator generator; a player-side subsystem would muddle that story. Design at `C:\Users\Cad\.claude\plans\brigliadoro-llm-player-harness.md`.
 
 ## Test Material
 
