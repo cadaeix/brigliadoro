@@ -17,6 +17,7 @@ import { createFacilitatorMemoryTools } from "./lib/runner/facilitator-memory.js
 import { createTranscriptWriter } from "./lib/runner/transcript.js";
 import type { TranscriptWriter } from "./lib/runner/transcript.js";
 import { runBookkeeper } from "./lib/runner/bookkeeper.js";
+import type { BookSnapshot } from "./lib/runner/bookkeeper.js";
 import { createSubagentTrace } from "./lib/runner/subagent-trace.js";
 import {
   installSeededRng,
@@ -183,6 +184,57 @@ function extractToolResultText(block: Record<string, unknown>): string {
     return content;
   }
   return "";
+}
+
+// ── Bookkeeper helpers ─────────────────────────────────────────────────
+
+/** Read the three book JSON files and return a compact name → summary
+ *  snapshot for the bookkeeper. Missing or corrupt files yield empty
+ *  per-book maps (the bookkeeper just sees "(empty)" for that book).
+ *  This runs every turn — it's a synchronous file read of three small
+ *  JSONs, well under a millisecond at session-realistic sizes. */
+function readBookSnapshot(stateDir: string): BookSnapshot {
+  return {
+    npcs: readBookSummaries(path.join(stateDir, "npcs.json")),
+    factions: readBookSummaries(path.join(stateDir, "factions.json")),
+    character_sheets: readBookSummaries(path.join(stateDir, "character-sheets.json")),
+  };
+}
+
+function readBookSummaries(filePath: string): Record<string, string> {
+  if (!fs.existsSync(filePath)) return {};
+  let raw: string;
+  try {
+    raw = fs.readFileSync(filePath, "utf-8");
+  } catch {
+    return {};
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    !("records" in parsed) ||
+    typeof (parsed as { records: unknown }).records !== "object" ||
+    (parsed as { records: unknown }).records === null
+  ) {
+    return {};
+  }
+  const records = (parsed as { records: Record<string, unknown> }).records;
+  const out: Record<string, string> = {};
+  for (const [name, record] of Object.entries(records)) {
+    if (record && typeof record === "object" && "summary" in record) {
+      const s = (record as { summary?: unknown }).summary;
+      out[name] = typeof s === "string" ? s : "";
+    } else {
+      out[name] = "";
+    }
+  }
+  return out;
 }
 
 // ── Save / resume helpers ──────────────────────────────────────────────
@@ -449,6 +501,10 @@ async function main() {
     sessionId: string;
   }): void {
     if (!input.turnText.trim() || !input.sessionId) return;
+    // Snapshot is taken at enqueue time (right after the facilitator's turn
+    // settles) so the bookkeeper sees the state as of just-before-its-own-
+    // writes. Long-session caveat: this payload grows with the books.
+    const bookSnapshot = readBookSnapshot(stateDir);
     pendingBookkeeper = runBookkeeper(
       {
         turnText: input.turnText,
@@ -459,6 +515,7 @@ async function main() {
           facilitatorRole,
           loreSummaryShort,
         },
+        bookSnapshot,
       },
       facilitatorServer,
       subagentTrace
