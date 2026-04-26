@@ -6,7 +6,7 @@ Deep reference for writing tests against generated game tools. The validator pro
 
 1. [Test helpers](#test-helpers) — seeded RNGs from `lib/test-helpers`
 2. [RNG → dice mapping](#rng--dice-mapping) — forcing specific dice outcomes
-3. [Gate 1: differential test](#gate-1-differential-test) — mandatory for RNG-touching tools
+3. [Gate 1: differential test](#gate-1-differential-test) — for any RNG-touching tool
 4. [Scenario tests](#scenario-tests) — per-outcome-tier coverage
 5. [What to test for each tool](#what-to-test-for-each-tool)
 
@@ -48,7 +48,7 @@ Shortcut: `sequenceRng([0.0, 0.999])` on a 2d6 roll yields `[1, 6]`. Useful for 
 
 ## Gate 1: differential test
 
-**Mandatory for any tool whose pure function calls an RNG primitive.** This catches wrapper bugs: lost rolls, reordered rolls, double-consumed rolls, sign errors, off-by-ones.
+Write one for any tool whose pure function calls an RNG primitive. It catches wrapper bugs that pure-function-only tests can't: lost rolls, reordered rolls, double-consumed rolls, sign errors, off-by-ones. Without this test, those bugs surface only at play time.
 
 The shape: seed the tool's pure function with a deterministic RNG, seed the primitive directly with the same RNG, and assert the raw mechanical fields are identical.
 
@@ -70,7 +70,7 @@ Writing the test:
 1. Read the pure function's source to identify the primitive call(s).
 2. For each seed, call the pure function with `seededRng(seed)` and call the primitive directly with `seededRng(seed)` using the same notation / args.
 3. Assert equality on the raw mechanical fields — dice rolls, drawn items, etc.
-4. Do NOT assert on interpreted fields like `outcome_tier` in the differential test — that's scenario-test territory.
+4. Don't assert on interpreted fields like `outcome_tier` in the differential test — that's scenario-test territory.
 5. If the tool makes multiple primitive calls (rolls AND draws), extend the assertions to cover each, in the order they appear in the pure function.
 
 Tools that touch NO RNG primitive (resource ops, clock ops only) skip Gate 1 — they're already deterministic.
@@ -189,6 +189,6 @@ If something fails:
 1. Read the error carefully.
 2. Is the failure in the test code or the tool code?
 3. Test bug → fix the test, re-run.
-4. Tool bug → do NOT modify the tool. Describe the bug clearly and report it back. Include the tool name, expected behaviour, actual behaviour, and the seed / RNG sequence that triggered the failure.
+4. Tool bug → don't modify the tool. Describe the bug clearly and report it back. Include the tool name, expected behaviour, actual behaviour, and the seed / RNG sequence that triggered the failure.
 
 Up to 3 test-fix iterations is normal. If you're hitting iteration 4, something deeper is wrong — report it.
