@@ -57,18 +57,23 @@ Send your **mechanics analysis** to the tool-builder subagent. Include:
 
 The tool-builder produces files in \`tools/\` (code) and \`evals/\` (one \`.triggers.json\` per tool file). Wait for it to finish before proceeding.
 
-### Step 3: Read the created tools
+### Step 3: Read the manifest
 
-Read every file in the runner's \`tools/\` directory. Extract for each tool:
+Read \`tools/manifest.json\` — the tool-builder's declared inventory of what it built. This is the source of truth for the tool set; you do not need to re-parse the \`.ts\` files for names, descriptions, outcome-tier values, or flags. Each manifest entry has:
 
-- Name (the first argument to \`tool()\`)
-- Description (the second argument)
-- Parameter schema (the zod schema object)
-- **\`outcome_tier\` enum values** — read the \`export type OutcomeTier = ...\` line and list the exact values. The characterizer writes per-tier narration and must use the tool's actual tier names. If a tool returns \`"clean" | "bent" | "screwed" | "disaster"\`, the facilitator prompt must give narration for each of those four, spelled exactly that way — not generic "success / partial / failure" mapped loosely.
-- Game-specific flags returned (e.g. \`fade_gained: boolean\`, \`lieutenant_claims_next: boolean\`) — the characterizer needs to teach the facilitator how to interpret these.
-- A brief summary of what each tool does mechanically.
+- \`name\` — the MCP tool name
+- \`file\` — relative path inside tools/
+- \`description\` — exact description string passed to tool()
+- \`params\` — name → short description
+- \`outcome_tiers\` — exact \`OutcomeTier\` values
+- \`flags\` — game-specific flags the tool returns
+- \`shape\` — \`"one-shot"\` or \`"pausable"\`
+- \`resources_emitted\` / \`resources_consumed\` — session resources written / read
+- \`source_ref\` — \`{ summary, quote, page_or_section? }\` declaring what source rules text justifies this tool
 
-This inventory is what the characterizer writes against. Tier-name mismatches between a tool's actual output and the facilitator prompt's narration are a silent play-time bug: the tool returns \`"disaster"\` and the facilitator prompt has no guidance for that tier, so the facilitator improvises.
+If \`tools/manifest.json\` is missing, malformed, or fails to match the schema described in \`src/meta/prompts/references/tool-reference.md#manifest\`, delegate back to the tool-builder to fix it before proceeding. The manifest is load-bearing for downstream subagents.
+
+The characterizer needs the manifest's \`outcome_tiers\` and \`flags\` for each tool — pass these explicitly when delegating to it. Tier-name mismatches between a tool's actual output and the facilitator prompt's narration are a silent play-time bug: the tool returns one of its declared tiers, and if the facilitator prompt has no guidance for that tier name, the facilitator improvises.
 
 ### Step 4: Delegate to characterizer and validator
 
@@ -95,7 +100,7 @@ If the validator reports tool code bugs (not test bugs), delegate back to the to
 
 Use Glob and Read to confirm expected files exist:
 
-- \`tools/\` contains at least one tool file and \`server.ts\`
+- \`tools/\` contains at least one tool file, \`server.ts\`, and \`manifest.json\`
 - \`tests/\` contains test files
 - \`evals/\` contains one \`<tool-file>.triggers.json\` per tool file
 - \`lore/summary.json\` exists
@@ -103,22 +108,33 @@ Use Glob and Read to confirm expected files exist:
 
 If a tool file has no corresponding \`.triggers.json\`, delegate back to the tool-builder. The trigger-eval corpus is load-bearing, not optional.
 
+**Manifest sanity check.** You already loaded \`tools/manifest.json\` in Step 3. Confirm it covers every tool wired into \`server.ts\` (by name) and that no manifest entry references a tool not in \`server.ts\`. Mismatch = one of:
+
+- A wired tool with no manifest entry (tool-builder skipped manifest discipline for it) — delegate back to add the entry.
+- A manifest entry for a non-existent tool (tool-builder removed the tool but forgot the manifest entry) — delegate back to remove.
+
+**Source-grounding spot-check (the part this catches that nothing else does).** For every manifest entry, read its \`source_ref.quote\`. Three flags:
+
+- **Empty quote.** Unless the \`summary\` clearly explains a structural-utility carve-out, an empty quote means the tool is invented — delegate back to remove or to find the supporting rules text.
+- **Quote is fiction, not rules.** If the quote reads as narrative ("Sara turns to face her opponent…"), as flavour ("the night is dangerous and full of terrors"), or as designer commentary ("we wanted this to feel cinematic"), it's the wrong kind of evidence. Rules text describes a mechanic procedure — numbered outcomes, threshold tables, resource definitions, action sequences. Delegate back asking the tool-builder to either find rules text or remove the tool.
+- **Two tools quote the same rules text.** If two manifest entries cite identical or near-identical source quotes, they're probably one mechanic split into two coordinating tools. Delegate back to consolidate (usually merging into one pausable tool).
+
+This spot-check is the *operative* anti-invention discipline — better than any prose warning in the tool-builder's prompt because it's a structural cross-check happening in your fresh-context view of the manifest. Don't skip it. The cost of one minute reading \`source_ref\` fields is much less than the cost of an invented tool reaching play.
+
 **Orphan tool files.** List every \`.ts\` in \`tools/\` other than \`server.ts\`. For each, check whether \`server.ts\` imports it. An orphan is one of two bugs:
 
-- Dead code the tool-builder forgot to clean up (duplicate definitions, abandoned drafts, files superseded by different filenames) — delegate back to remove.
-- A tool that should be wired but isn't (factory written, not imported) — delegate back to add the import + factory call.
+- Dead code the tool-builder forgot to clean up — delegate back to remove.
+- A tool that should be wired but isn't — delegate back to add the import + factory call.
 
-Either way, fix before handoff. The tool-builder's Step 7 (server assembly) is supposed to catch this; this is the safety net.
+**Orphan root-level files.** List every file directly in the runner root. The expected set is exactly: \`config.json\`, \`package.json\`, \`play.ts\`, and \`package-lock.json\` (if npm install ran), plus the directories \`tools/\`, \`evals/\`, \`tests/\`, \`lore/\`, \`state/\`, \`lib/\`, and \`node_modules/\` (if present). Anything else — \`README.md\`, \`NOTES.md\`, \`TOOLS_README.md\`, design-rationale files, etc. — is a subagent leaking out of its scope. Delegate back to the responsible subagent to remove. The runner's root surface area is what the player and the harness see; foreign files there confuse both.
 
-**Orphan root-level files.** List every file directly in the runner root. The expected set is exactly: \`config.json\`, \`package.json\`, \`play.ts\`, and \`package-lock.json\` (if npm install ran), plus the directories \`tools/\`, \`evals/\`, \`tests/\`, \`lore/\`, \`state/\`, \`lib/\`, and \`node_modules/\` (if present). Anything else — \`README.md\`, \`NOTES.md\`, \`TOOLS_README.md\`, design-rationale files, etc. — is a subagent leaking out of its scope. Delegate back to the responsible subagent (likely the tool-builder, sometimes the characterizer) to remove. The runner's root surface area is what the player and the harness see; foreign files there confuse both. Subagents have an instruction to keep design rationale in their *response* to you, not in files; if you find such a file, that instruction was missed.
+**Tool ↔ characterizer coherence.** Use the manifest as your reference, since it carries the canonical \`outcome_tiers\` and \`flags\` for each tool:
 
-**Tool ↔ characterizer coherence.** Cross-check the characterizer's \`config.json\` against the tool-builder's actual output, three classes of mismatch:
+- **Tool-name mismatches.** Compare tool names referenced in \`facilitatorPrompt\` and \`characterCreation.steps\` / \`groupSetup\` steps against the manifest's \`tools[].name\` list. Reference to a name not in the manifest → either characterizer invented it (delegate back to characterizer) or the tool-builder missed the mechanic and the characterizer noticed (delegate back to tool-builder with the missing mechanic specified). A manifest entry with no characterizer reference is suspicious — delegate back to characterizer to either reference it or to tool-builder to remove it.
+- **Outcome-tier mismatches.** For each tool the characterizer narrates, confirm the per-tier guidance uses the exact \`outcome_tiers\` values from that tool's manifest entry. Mismatch = facilitator at play time sees tier strings the prompt doesn't match → improvises. Delegate back with the exact tier names from the manifest.
+- **Game-specific flag coverage.** For each entry in a tool's manifest \`flags\` field, confirm the characterizer's tool-usage guidance explains how to interpret and narrate it. Uncovered flag = mechanic degrades to cosmetic.
 
-- **Tool-name mismatches.** Compare tool names referenced in \`facilitatorPrompt\` and \`characterCreation.steps\` / \`groupSetup\` steps against the actual tools. Reference to a non-existent tool → either invented (delegate back to characterizer) or the tool-builder missed the mechanic (delegate back to tool-builder, naming the missing mechanic). A tool with no characterizer reference is probably invented — delegate back to remove.
-- **Outcome-tier mismatches.** For each tool the characterizer narrates, confirm the per-tier guidance uses the exact tier names from the tool's \`OutcomeTier\` type. Mismatch = facilitator at play time sees tier strings the prompt doesn't match → improvises. Delegate back with the exact tier names.
-- **Game-specific flag coverage.** For each flag the tool returns and the facilitator is expected to react to (\`fade_gained\`, \`critical_threshold_crossed\`, etc.), confirm the characterizer's tool-usage guidance explains how to interpret and narrate it. Uncovered flag = mechanic degrades to cosmetic.
-
-These checks are what makes generation actually shippable. Skipping them strands the facilitator at play time with no way to recover from the mismatch.
+These checks are what makes generation actually shippable. Skipping them strands the facilitator at play time with no way to recover.
 
 Report completion with a summary of what was generated.
 

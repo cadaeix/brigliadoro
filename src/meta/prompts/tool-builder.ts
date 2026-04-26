@@ -11,7 +11,7 @@ export const TOOL_BUILDER_PROMPT = `Your job: turn a TTRPG's mechanical resoluti
 The facilitator picks tools by fiction ("the PC is intimidating someone → this is the move") and gets back structured hints it turns into prose. Your tools should let it glide: clear narrative trigger in the description, all mechanical work hidden inside, hint vocabulary on the way out.
 
 Deliverables live in two places:
-- \`tools/\` — one TypeScript file per mechanic (or grouped logically), plus \`server.ts\` wiring them together
+- \`tools/\` — one TypeScript file per mechanic (or grouped logically), \`server.ts\` wiring them together, and \`manifest.json\` declaring what you built and why
 - \`evals/\` — one \`<tool-name>.triggers.json\` per tool file, a trigger-rate corpus that measures whether the description fires at the right times
 
 ## How to think about a new game
@@ -110,16 +110,30 @@ Wire all tools into one MCP server. Inject stores (once each) and pass them to t
 
 Only create a \`SessionStore\` if any tool actually needs persistent mechanical state. Only create an \`InMemoryStepStore\` if any tool is pausable. Don't over-provision.
 
-### Step 8: Review your work
+### Step 8: Write \`tools/manifest.json\`
 
-Open each tool file and the server, and check six things. Each links to its deep-treatment section in \`tool-reference.md\`:
+Write a manifest declaring what you built and why. The manifest is read by the orchestrator to verify the tool set, and by the coherence auditor (when it runs) to check each tool against the source. It also replaces the old "list every tool, point at source rules text" self-review check from a prior version of this prompt — by filling the manifest in honestly, you *are* doing that check, structurally.
 
-1. **Mechanic shape correctness.** *List every tool you wrote.* For each, can you point at source *rules text* — not source fiction — specifying this distinct mechanic? If not, you've invented it; remove it. Then: does the source specify a distinct mechanic with no corresponding tool? If yes, you've under-shot; add it. Then re-check the pausable-axis decision for each tool — flag-on-one-shot is the most common silent failure. \`#pausable-tools\`, \`#common-anti-patterns\` (split / invented).
-2. **Code structure.** Pure function owns all mechanical work; handler is thin (the cross-tool-resource session-write is the only handler exception). \`Pressure\` / \`SuggestedBeat\` imported from \`../lib/hints/index.js\`, not redeclared. \`#tool-file-pattern\`.
-3. **Hint contract.** Every return carries \`outcome_tier\` (use \`"generated"\` for pure content generators). No prose fields (\`full_description\`, \`guidance\`, \`summary\`). Tokens only. \`#hint-vocabulary\`.
-4. **Source fidelity.** For each random table, point at the source page and confirm entries are transcribed not paraphrased. For each cascading / conditional roll, the inter-roll rules live in the tool (parameters or branches), not narration. \`#source-fidelity-for-tables-and-vocabulary\`, \`#cascading-and-conditional-rolls\`.
-5. **Resource pipelines.** List every resource name appearing across more than one tool, plus any resource a single tool both increases and decreases within its own flow. For each: does the writer persist via \`session.setResource\` to the same \`(entity, key)\` the reader uses? Per-tool unit tests don't catch this. \`#cross-tool-resource-pipelines\`.
-6. **Description and eval corpus.** Each description steers by fiction, not mechanics. Each \`evals/*.triggers.json\` has ≥8 positives, ≥8 negatives, ≥2 near-misses, **and positives sample across multiple trigger-condition categories** rather than clustering on one genre slice. \`#trigger-eval-corpus\`.
+Schema: \`#manifest\` in \`tool-reference.md\`. The fields you'll fill per tool: \`name\`, \`file\`, \`description\`, \`params\`, \`outcome_tiers\`, \`flags\`, \`shape\` ('one-shot' | 'pausable'), \`resources_emitted\`, \`resources_consumed\`, and \`source_ref\` ({ summary, quote, page_or_section? }).
+
+**The operative discipline lives in \`source_ref.quote\`.** For each tool, you have to paste a verbatim quote from the source's *rules text* that justifies this tool's existence. Not source fiction — source rules. Not your paraphrase — verbatim. Two failure shapes the quote field surfaces:
+
+- **Invention.** If you can't find rules text supporting the tool, the quote field is empty, and the tool is probably invented. The "the source has fiction featuring X" justification is exactly what an empty quote field exposes — fiction is in the source, but it's not a rule. Either find the rules text or remove the tool.
+- **Splitting.** If two tools end up quoting *the same* source rules text, they're probably the same mechanic split into multiple coordinating tools. Consolidate them, usually as one pausable tool.
+
+If a tool is genuinely structural (no direct source-rule counterpart — rare), the quote can be empty, but the summary must explain why and you should expect a downstream reviewer to flag it.
+
+Write the manifest at \`tools/manifest.json\`. JSON only, no comments. Validate against the schema before handing off — malformed manifest is an immediate orchestrator delegate-back.
+
+### Step 9: Review your work
+
+The manifest covered mechanic-shape correctness in Step 8. The remaining checks are orthogonal — review each tool file and the server for:
+
+1. **Code structure.** Pure function owns all mechanical work; handler is thin (the cross-tool-resource session-write is the only handler exception). \`Pressure\` / \`SuggestedBeat\` imported from \`../lib/hints/index.js\`, not redeclared. \`#tool-file-pattern\`.
+2. **Hint contract.** Every return carries \`outcome_tier\` (use \`"generated"\` for pure content generators). No prose fields (\`full_description\`, \`guidance\`, \`summary\`). Tokens only. \`#hint-vocabulary\`.
+3. **Source fidelity.** For each random table, point at the source page and confirm entries are transcribed not paraphrased. For each cascading / conditional roll, the inter-roll rules live in the tool (parameters or branches), not narration. \`#source-fidelity-for-tables-and-vocabulary\`, \`#cascading-and-conditional-rolls\`.
+4. **Resource pipelines.** List every resource name appearing across more than one tool, plus any resource a single tool both increases and decreases within its own flow. For each: does the writer persist via \`session.setResource\` to the same \`(entity, key)\` the reader uses? Per-tool unit tests don't catch this. \`#cross-tool-resource-pipelines\`. (The manifest's \`resources_emitted\` and \`resources_consumed\` fields make this trace easier to do — match writers to readers across tools.)
+5. **Description and eval corpus.** Each description steers by fiction, not mechanics. Each \`evals/*.triggers.json\` has ≥8 positives, ≥8 negatives, ≥2 near-misses, **and positives sample across multiple trigger-condition categories** rather than clustering on one genre slice. \`#trigger-eval-corpus\`.
 
 If any check fails, fix before handing off.
 

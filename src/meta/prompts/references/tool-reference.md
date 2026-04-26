@@ -13,7 +13,8 @@ Deep reference for building game tools. The tool-builder prompt points here for 
 7. [Source fidelity for tables and vocabulary](#source-fidelity-for-tables-and-vocabulary) — transcribe, don't re-theme
 8. [Hint vocabulary](#hint-vocabulary) — what tool returns carry
 9. [Trigger eval corpus](#trigger-eval-corpus) — the `.triggers.json` format
-10. [Anti-patterns index](#anti-patterns-index) — cross-references to where each anti-pattern is treated
+10. [Manifest](#manifest) — the `tools/manifest.json` you write declaring what you built and why
+11. [Anti-patterns index](#anti-patterns-index) — cross-references to where each anti-pattern is treated
 
 ---
 
@@ -619,6 +620,113 @@ Practice: before drafting positives, list the *categories of trigger* this tool 
 Write at least one positive per category that's plausible in this game's fiction. If a category has no plausible positive, leave it out — but make the omission deliberate.
 
 Mix the genre markers across positives — no two positives should name the same NPC, the same weapon, the same location. Force yourself away from clusters.
+
+---
+
+## Manifest
+
+After you've written all tool files and assembled `server.ts`, you write `tools/manifest.json` — a structured declaration of what you built and (critically) what source rules text justifies each tool. The orchestrator's verification step reads this in place of ad-hoc parsing of your `.ts` files; the coherence auditor (when it runs) reads it as the primary input for source-grounding checks.
+
+The manifest's `source_ref.quote` field is the single most important discipline this artefact enforces. Every tool you wrote must be accompanied by a verbatim quote from the source's *rules text* (not source fiction) supporting its existence. If you can't produce one, the tool is probably invented; remove it. If two tools quote the same rules text, they're probably one mechanic split into two; consolidate.
+
+### Schema
+
+```ts
+interface ToolManifest {
+  game_name: string;       // matches config.json's name
+  version: 1;              // schema version
+  tools: ToolManifestEntry[];
+}
+
+interface ToolManifestEntry {
+  name: string;            // MCP tool name, snake_case (first arg to tool())
+  file: string;            // relative path inside tools/, e.g. "primary-action.ts"
+  description: string;     // exact description string passed to tool() — what steers facilitator selection
+  params: Record<string, string>;  // param name → short description
+  outcome_tiers: string[]; // exact OutcomeTier values; ["generated"] for content generators
+  flags: string[];         // game-specific flags returned (snake_case); empty if none
+  shape: "one-shot" | "pausable";
+  resources_emitted: string[];  // session resources this tool writes; empty if none
+  resources_consumed: string[]; // session resources this tool reads; empty if none
+  source_ref: {
+    summary: string;       // 1-line: what source mechanic this tool models
+    quote: string;         // verbatim source rules text justifying the tool; may be "" only in narrow structural cases
+    page_or_section?: string;  // optional locator
+  };
+}
+```
+
+### Example
+
+A minimal manifest for a hypothetical PbtA-style game with one resolution move and one stat-change utility:
+
+```json
+{
+  "game_name": "Example Game",
+  "version": 1,
+  "tools": [
+    {
+      "name": "act_under_pressure",
+      "file": "act-under-pressure.ts",
+      "description": "Roll when a PC takes action while threatened or rushed — anything where success is uncertain and failure has teeth.",
+      "params": {
+        "stat_modifier": "The +/- modifier from the relevant stat for this action."
+      },
+      "outcome_tiers": ["strong_hit", "weak_hit", "miss"],
+      "flags": ["complication_triggered"],
+      "shape": "one-shot",
+      "resources_emitted": [],
+      "resources_consumed": [],
+      "source_ref": {
+        "summary": "The game's universal action move — 2d6 + stat, 10+ strong hit, 7-9 weak hit, 6- miss.",
+        "quote": "When you act under pressure, roll +stat. On a 10+, you do it without complication. On a 7-9, you do it but the GM picks one: it costs you, it's incomplete, or there's a downside. On a 6-, the GM makes a hard move.",
+        "page_or_section": "Core Move, p. 14"
+      }
+    },
+    {
+      "name": "spend_focus",
+      "file": "spend-focus.ts",
+      "description": "When a PC spends a Focus point to push through exhaustion, fear, or distraction.",
+      "params": {
+        "pc_name": "Name of the PC spending Focus.",
+        "amount": "How many Focus points to spend (usually 1)."
+      },
+      "outcome_tiers": ["success", "failure"],
+      "flags": [],
+      "shape": "one-shot",
+      "resources_emitted": [],
+      "resources_consumed": ["focus"],
+      "source_ref": {
+        "summary": "Focus is a spendable PC resource that the PC can burn to overcome certain conditions.",
+        "quote": "You may spend 1 Focus to ignore the next negative consequence imposed on you this scene.",
+        "page_or_section": "Resources, p. 22"
+      }
+    }
+  ]
+}
+```
+
+### Filling the source_ref honestly
+
+The temptation is to fill `source_ref.quote` with whatever's vaguely related — a fiction passage, a flavour blurb, a GM tip. That defeats the purpose. The quote must be **mechanical text the source uses to define a rule**, not narrative or atmospheric text.
+
+What counts as rules text:
+- Numbered move descriptions, action procedures, resolution flows
+- Threshold tables ("on a 10+ … on a 7-9 … on a 6 or less …")
+- Resource definitions with mechanical effects ("each point of X lets you do Y")
+- Procedural sequences ("when X happens, do Y, then Z")
+
+What does NOT count:
+- Fiction examples ("Sara rolls to climb the wall, the GM narrates…")
+- World-building prose
+- Designer commentary or play advice
+- "When two characters fight, things get tense" — unless followed by a distinct mechanical procedure
+
+If a tool's source_ref.quote is a fiction passage rather than rules text, the tool is built on the wrong foundation. Either find rules text that justifies the same mechanic, or recognise the tool is invented and remove it.
+
+### Empty quote — narrow legitimacy
+
+A handful of tools genuinely have no source-rule counterpart: rare structural utilities (a `start_session` housekeeping tool, a `summarise_state` debug helper). When you have one of these, leave `quote` empty and explain *in `summary`* why no rules text applies. A reviewer should see this and either accept it or push back. Treat empty quote as a flag, not a free pass.
 
 ---
 
