@@ -111,7 +111,9 @@ Runner (orchestrated by play.ts)
     └── Runs async during player thinking time; awaited before next turn / on /quit
 ```
 
-Future subagents (continuity-checker, lore-spelunker, session-recap-writer, safety-monitor) follow the same pattern: fresh query, Haiku model, scoped MCP access, orchestrated at turn boundaries or on demand. Pattern-of-record at `C:\Users\Cad\.claude\plans\bookkeeper-subagent.md`. Bookkeeper-side evolution (continuity-checker + on-demand variant search + recency-bounded snapshot) detailed at `C:\Users\Cad\.claude\plans\bookkeeper-agentic-evolution.md`. Generator-side topology evolution (workflow-preset menu, component splits) at `C:\Users\Cad\.claude\plans\brigliadoro-subagent-topology.md`. LLM-as-player subsystem design (lives outside this repo) at `C:\Users\Cad\.claude\plans\llm-player-harness.md`.
+Future subagents (continuity-checker, lore-spelunker, session-recap-writer, safety-monitor) follow the same pattern: fresh query, Haiku model, scoped MCP access, orchestrated at turn boundaries or on demand. Pattern-of-record at `C:\Users\Cad\.claude\plans\brigliadoro-bookkeeper-subagent.md`. Bookkeeper-side evolution (continuity-checker + on-demand variant search + recency-bounded snapshot) detailed at `C:\Users\Cad\.claude\plans\brigliadoro-bookkeeper-agentic-evolution.md`. Generator-side topology evolution (workflow-preset menu, component splits) at `C:\Users\Cad\.claude\plans\brigliadoro-subagent-topology.md`. LLM-as-player subsystem design (lives outside this repo) at `C:\Users\Cad\.claude\plans\brigliadoro-llm-player-harness.md`.
+
+(Plan files in `~/.claude/plans/` are global across all Claude Code projects, not per-project, so Brigliadoro plans are prefixed with `brigliadoro-` to keep them grouped. When spawning new Plan agents for Brigliadoro work, write to a `brigliadoro-<descriptive-name>.md` filename.)
 
 Model selection rationale: Opus for decisions requiring taste and narrative judgment, Sonnet for bulk code generation, Haiku for cheap repetitive parsing/validation. The Agent SDK supports per-subagent `model` selection.
 
@@ -156,14 +158,14 @@ Commit per discrete feature, not per session. When a pick completes and tests go
 
 Four composable hooks exist for non-interactive / deterministic play sessions. All are independent of the generator; they live in `src/runner/` and ride into every generated runner via the standard copy.
 
-- **Seed mode** — `npm run play -- --seed=N` (or `--rng-sequence=0.1,0.5,…`). Monkey-patches `Math.random` at process start so every game-tool dice primitive is deterministic. Useful for reproducing specific mechanical branches on demand (e.g. forcing a particular outcome tier). Seed is logged in the transcript header for reproducibility. See `C:\Users\Cad\.claude\plans\seed-mode.md`.
+- **Seed mode** — `npm run play -- --seed=N` (or `--rng-sequence=0.1,0.5,…`). Monkey-patches `Math.random` at process start so every game-tool dice primitive is deterministic. Useful for reproducing specific mechanical branches on demand (e.g. forcing a particular outcome tier). Seed is logged in the transcript header for reproducibility. See `C:\Users\Cad\.claude\plans\brigliadoro-seed-mode.md`.
 - **Pre-scripted player input** — `npm run play -- --player-script=FILE` reads NDJSON messages one per line and plays them as player turns, returning `/quit` on EOF. Input-only abstraction (`PlayerInputSource`); doesn't care what's producing the messages.
 - **Live-tailed player input** — `npm run play -- --player-script-tail=FILE` polls the NDJSON file for new lines as they appear, blocking inside the prompt loop until one arrives, ending on a `{"type":"quit"}` sentinel. Lets an external driver (human in another terminal, Claude Code session, or a future LLM-player harness) append turns one at a time while the runner is live. Same `PlayerInputSource` abstraction, file-tailing variant.
 - **Player preferences** — `npm run play -- --player-preferences=FILE` reads a markdown file with pre-baked answers to the universal session-zero questions (tone, content to avoid, story shape, etc). The facilitator is told to treat these as already-answered and skip the questions. Useful for repeatable testing-with-fixed-preferences and for the LLM-player harness, where personas embed their own preferences.
 
 Compose freely: `--seed=42 --player-script-tail=./turns.ndjson --player-preferences=./prefs.md` → a fully deterministic, live-driven, preferences-pinned session.
 
-**LLM-as-player and persona frameworks are intentionally OUT of Brigliadoro.** The player-input hooks are deliberately generic. Persona prompts, agentic-player runners, eval harnesses, and anecdata scenarios belong in a sister space (user-level prompt frameworks, Claude Code skills, or a separate repo) — not inside the project. Brigliadoro is a facilitator generator; a player-side subsystem would muddle that story. Design at `C:\Users\Cad\.claude\plans\llm-player-harness.md`.
+**LLM-as-player and persona frameworks are intentionally OUT of Brigliadoro.** The player-input hooks are deliberately generic. Persona prompts, agentic-player runners, eval harnesses, and anecdata scenarios belong in a sister space (user-level prompt frameworks, Claude Code skills, or a separate repo) — not inside the project. Brigliadoro is a facilitator generator; a player-side subsystem would muddle that story. Design at `C:\Users\Cad\.claude\plans\brigliadoro-llm-player-harness.md`.
 
 ## Test Material
 
