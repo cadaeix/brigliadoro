@@ -79,11 +79,13 @@ A **runner** is a generated directory containing everything needed to play a spe
 Runners are shareable (e.g., push to GitHub) as long as the source material's licensing permits.
 
 - **The facilitator agent** uses the generated MCP tools + memory books + knowledge base to run the game
-- **The bookkeeper subagent** (Haiku) runs after each facilitator turn to scan for named entities and write them to the typed memory books. Facilitator reads the books for continuity but doesn't write to them itself.
+- **The bookkeeper subagent** (Haiku) runs after each facilitator turn to scan for named entities and write them to the typed memory books. The bookkeeper receives a pre-supplied snapshot of current book state (`name → summary` per book) at each invocation so it can match-or-create against existing records rather than upserting variants of names that already exist. Facilitator reads the books for continuity but doesn't write to them itself.
 - Player interaction via the terminal play harness (readline); skinned HTML/CSS UI later
 - The facilitator sees only structured hint output from tools, not intermediate mechanical steps
 - Session state (Agent SDK session history) + scratchpad + books are saveable; runner supports `--resume`/`--new`/`--new-session` and `/quit`/`/new`/`/new-session` runtime commands
+- **Pre-rendered opening message** — characterizer can write `config.openingMessage`, displayed directly to the player on first-time / `/new` modes before any LLM call; the agent's first turn picks up from the player's first response. Saves an LLM call per first-time session and ensures consistent first impression. Falls back to agent-generated greeting when absent.
 - **Per-session observability**: markdown transcript at `state/transcripts/<shortid>.md` (player + facilitator text + tool calls + tool results) plus JSONL subagent trace at `state/transcripts/<shortid>.subagents.jsonl` (one line per subagent invocation with turn, input, tool calls, duration).
+- **Runner archive**: regenerating a runner moves the previous version to `runners/_archive/<name>-<timestamp>/` instead of deleting it, so generations can be diff'd and in-progress play state is recoverable. `runners/_archive/` is gitignored.
 
 ### Agent Topology
 
@@ -109,7 +111,7 @@ Runner (orchestrated by play.ts)
     └── Runs async during player thinking time; awaited before next turn / on /quit
 ```
 
-Future subagents (continuity-checker, lore-spelunker, session-recap-writer, safety-monitor) follow the same pattern: fresh query, Haiku model, scoped MCP access, orchestrated at turn boundaries or on demand. Plan at `C:\Users\Cad\.claude\plans\bookkeeper-subagent.md`.
+Future subagents (continuity-checker, lore-spelunker, session-recap-writer, safety-monitor) follow the same pattern: fresh query, Haiku model, scoped MCP access, orchestrated at turn boundaries or on demand. Pattern-of-record at `C:\Users\Cad\.claude\plans\bookkeeper-subagent.md`. Bookkeeper-side evolution (continuity-checker + on-demand variant search + recency-bounded snapshot) detailed at `C:\Users\Cad\.claude\plans\bookkeeper-agentic-evolution.md`. Generator-side topology evolution (workflow-preset menu, component splits) at `C:\Users\Cad\.claude\plans\brigliadoro-subagent-topology.md`. LLM-as-player subsystem design (lives outside this repo) at `C:\Users\Cad\.claude\plans\llm-player-harness.md`.
 
 Model selection rationale: Opus for decisions requiring taste and narrative judgment, Sonnet for bulk code generation, Haiku for cheap repetitive parsing/validation. The Agent SDK supports per-subagent `model` selection.
 
@@ -140,7 +142,7 @@ Model selection rationale: Opus for decisions requiring taste and narrative judg
 - **Multi-model topology** — `--models quality` preset exists (Opus orchestrator + characterizer, Haiku validator) but hasn't been benchmarked
 - **Player-facing UI** — skinnable HTML/CSS replacing the terminal readline
 
-**Done** (noted because each was on this roadmap): typed memory books for NPCs/factions/character-sheets with file persistence; save/resume across restarts; structured hint vocabulary replacing prose guidance; facilitator framing for broad genre support; `outcome_tier` required on every tool return with a `"generated"` carve-out for pure content generators; forbidden prose fields (`full_description` etc.); shared hint types in `src/hints/`; pausable pattern MANDATORY for mid-resolution player input; bookkeeper subagent owns writes to typed books; tool-builder prompt restructured workflow-shaped with progressive-disclosure reference files.
+**Done** (noted because each was on this roadmap): typed memory books for NPCs/factions/character-sheets with file persistence; save/resume across restarts; structured hint vocabulary replacing prose guidance; facilitator framing for broad genre support; `outcome_tier` required on every tool return with a `"generated"` carve-out for pure content generators; forbidden prose fields (`full_description` etc.); shared hint types in `src/hints/`; pausable pattern MANDATORY for mid-resolution player input; bookkeeper subagent owns writes to typed books; tool-builder prompt restructured workflow-shaped with progressive-disclosure reference files; cross-tool resource pipeline discipline + intra-tool resource effects + cascading/conditional roll guidance + source fidelity for tables (all in tool-reference.md); orchestrator outcome-tier extraction + tool↔characterizer coherence cross-checks + orphan-tool-file detection + verbatim-passing carve-out for fidelity-critical content; trigger-eval corpus distribution discipline (positives must sample across categories of trigger condition, not cluster on one genre); bookkeeper snapshot pre-supply with match-or-create discipline; runner archive on regen; `--player-script-tail` for live turn-by-turn external driving; `--player-preferences` flag for pre-baked session-zero answers; `config.openingMessage` middle-path so the player sees a pre-rendered first impression before any LLM call.
 
 ## Runner Regeneration
 
@@ -152,14 +154,16 @@ Commit per discrete feature, not per session. When a pick completes and tests go
 
 ## Testing infrastructure (runners)
 
-Two composable hooks exist for non-interactive / deterministic play sessions. Both are independent of the generator; they live in `src/runner/` and ride into every generated runner via the standard copy.
+Four composable hooks exist for non-interactive / deterministic play sessions. All are independent of the generator; they live in `src/runner/` and ride into every generated runner via the standard copy.
 
 - **Seed mode** — `npm run play -- --seed=N` (or `--rng-sequence=0.1,0.5,…`). Monkey-patches `Math.random` at process start so every game-tool dice primitive is deterministic. Useful for reproducing specific mechanical branches on demand (e.g. forcing a particular outcome tier). Seed is logged in the transcript header for reproducibility. See `C:\Users\Cad\.claude\plans\seed-mode.md`.
-- **Scripted player input** — `npm run play -- --player-script=FILE` reads NDJSON messages one per line and plays them as player turns, returning `/quit` on EOF. Input-only abstraction (`PlayerInputSource`); doesn't care what's producing the messages. Personas / agentic-player frameworks live outside the project (see below).
+- **Pre-scripted player input** — `npm run play -- --player-script=FILE` reads NDJSON messages one per line and plays them as player turns, returning `/quit` on EOF. Input-only abstraction (`PlayerInputSource`); doesn't care what's producing the messages.
+- **Live-tailed player input** — `npm run play -- --player-script-tail=FILE` polls the NDJSON file for new lines as they appear, blocking inside the prompt loop until one arrives, ending on a `{"type":"quit"}` sentinel. Lets an external driver (human in another terminal, Claude Code session, or a future LLM-player harness) append turns one at a time while the runner is live. Same `PlayerInputSource` abstraction, file-tailing variant.
+- **Player preferences** — `npm run play -- --player-preferences=FILE` reads a markdown file with pre-baked answers to the universal session-zero questions (tone, content to avoid, story shape, etc). The facilitator is told to treat these as already-answered and skip the questions. Useful for repeatable testing-with-fixed-preferences and for the LLM-player harness, where personas embed their own preferences.
 
-Compose: `--seed=42 --player-script=./scripts/insight-trigger.ndjson` → a fully deterministic scripted session.
+Compose freely: `--seed=42 --player-script-tail=./turns.ndjson --player-preferences=./prefs.md` → a fully deterministic, live-driven, preferences-pinned session.
 
-**LLM-as-player and persona frameworks are intentionally OUT of Brigliadoro.** The player-input hook is deliberately generic. Persona prompts, agentic-player runners, eval harnesses, and anecdata scenarios belong in a sister space (user-level prompt frameworks, Claude Code skills, or a separate repo) — not inside the project. Brigliadoro is a facilitator generator; a player-side subsystem would muddle that story.
+**LLM-as-player and persona frameworks are intentionally OUT of Brigliadoro.** The player-input hooks are deliberately generic. Persona prompts, agentic-player runners, eval harnesses, and anecdata scenarios belong in a sister space (user-level prompt frameworks, Claude Code skills, or a separate repo) — not inside the project. Brigliadoro is a facilitator generator; a player-side subsystem would muddle that story. Design at `C:\Users\Cad\.claude\plans\llm-player-harness.md`.
 
 ## Test Material
 
