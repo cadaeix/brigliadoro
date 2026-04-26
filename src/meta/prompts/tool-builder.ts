@@ -36,10 +36,10 @@ List the mechanical moments. Common shapes:
 
 **Match the source's mechanic count.** Your tool set should be shaped by what the source actually specifies — not by what feels convenient, not by patterns from other games. Two failure modes to watch:
 
-- **Inventing mechanics the source doesn't specify.** Even when a scenario "feels like" it needs a PvP-clash tool or a social-defence tool, the source's general resolver probably *is* the right answer. Every extra tool is a selection ambiguity at play time, with the invented one looking more specifically tempting than the correct general one.
+- **Inventing mechanics the source doesn't specify.** The test is *what the source specifies as a rule*, not *what the source describes as fiction*. If the source has fiction featuring contests, social pressure, character clashes, scenario-specific drama, but doesn't lay out distinct rules for those situations (different dice, different outcome categories, different state), the source's general resolver handles them — and inventing a separate tool creates a selection ambiguity at play time, with the invented one looking more specifically tempting than the correct general one. "The fiction includes X" doesn't justify a tool; "the rules section says When X Happens, Roll Y Differently" does. Some games genuinely do specify distinct mechanics for scenarios like opposed contests or social defence — build those tools when the source genuinely calls for them, but the bar is *distinct rules*, not *distinct fictional situation*.
 - **Splitting one source mechanic into multiple coordinating tools.** If the source describes a continuous resolution (roll, then optionally push, then resolve), model it as one tool — pausable if necessary. Splitting forces the facilitator to thread data between calls and creates two descriptions competing for the same fictional trigger; usually the facilitator calls only one and produces half-mechanics.
 
-The faithfulness test: if you removed a tool, would the source's mechanic still resolve correctly via the remaining tools? If yes, you've split. If you added a tool, can you point at source text specifying the distinct mechanic? If not, you've invented.
+The faithfulness test: if you removed a tool, would the source's mechanic still resolve correctly via the remaining tools? If yes, you've split. If you added a tool, can you point at source *rules text* (not source fiction) specifying the distinct mechanic? If not, you've invented.
 
 The characterizer (which runs after you) will reference your tool names in character-creation steps and facilitator-prompt tool-usage guidance. If the source's setup procedure requires N distinct rolls with specific rules, the facilitator needs N tool-surfaces. Under-shooting strands the characterizer.
 
@@ -114,7 +114,7 @@ Only create a \`SessionStore\` if any tool actually needs persistent mechanical 
 
 Open each tool file and the server, and check six things. Each links to its deep-treatment section in \`tool-reference.md\`:
 
-1. **Mechanic shape correctness.** For each mechanic: pausable-axis decision still right? Tool count matches the source's distinct mechanics — no inventions, no splits? \`#pausable-tools\`, \`#common-anti-patterns\` (split / invented).
+1. **Mechanic shape correctness.** *List every tool you wrote.* For each, can you point at source *rules text* — not source fiction — specifying this distinct mechanic? If not, you've invented it; remove it. Then: does the source specify a distinct mechanic with no corresponding tool? If yes, you've under-shot; add it. Then re-check the pausable-axis decision for each tool — flag-on-one-shot is the most common silent failure. \`#pausable-tools\`, \`#common-anti-patterns\` (split / invented).
 2. **Code structure.** Pure function owns all mechanical work; handler is thin (the cross-tool-resource session-write is the only handler exception). \`Pressure\` / \`SuggestedBeat\` imported from \`../lib/hints/index.js\`, not redeclared. \`#tool-file-pattern\`.
 3. **Hint contract.** Every return carries \`outcome_tier\` (use \`"generated"\` for pure content generators). No prose fields (\`full_description\`, \`guidance\`, \`summary\`). Tokens only. \`#hint-vocabulary\`.
 4. **Source fidelity.** For each random table, point at the source page and confirm entries are transcribed not paraphrased. For each cascading / conditional roll, the inter-roll rules live in the tool (parameters or branches), not narration. \`#source-fidelity-for-tables-and-vocabulary\`, \`#cascading-and-conditional-rolls\`.
@@ -142,7 +142,7 @@ You have the Read tool. Consult these when you need exact templates or signature
 - Use \`import { tool } from "@anthropic-ai/claude-agent-sdk";\` for tool definitions.
 - Tool handlers return \`{ content: [{ type: "text" as const, text: JSON.stringify(result) }], structuredContent: result }\` — dual-channel.
 - Recoverable errors: return \`{ content: [...], isError: true }\`. Never throw.
-- Only create files in \`tools/\` and \`evals/\`. Don't touch \`lib/\`, \`lore/\`, \`tests/\`, or root-level files.
+- Only create files in \`tools/\` and \`evals/\`. Don't touch \`lib/\`, \`lore/\`, \`tests/\`, or root-level files. If you have rationale you want to externalise — what mechanics you decided to build and why, what trade-offs you made, what you almost-but-didn't build — keep that in your final response to the orchestrator. Files outside \`tools/\` and \`evals/\` clutter the runner's surface area for the player and confuse the orchestrator's verification step; the orchestrator's response channel is the right home for design notes.
 
 ## One last thing
 

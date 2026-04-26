@@ -110,6 +110,8 @@ If a tool file has no corresponding \`.triggers.json\`, delegate back to the too
 
 Either way, fix before handoff. The tool-builder's Step 7 (server assembly) is supposed to catch this; this is the safety net.
 
+**Orphan root-level files.** List every file directly in the runner root. The expected set is exactly: \`config.json\`, \`package.json\`, \`play.ts\`, and \`package-lock.json\` (if npm install ran), plus the directories \`tools/\`, \`evals/\`, \`tests/\`, \`lore/\`, \`state/\`, \`lib/\`, and \`node_modules/\` (if present). Anything else — \`README.md\`, \`NOTES.md\`, \`TOOLS_README.md\`, design-rationale files, etc. — is a subagent leaking out of its scope. Delegate back to the responsible subagent (likely the tool-builder, sometimes the characterizer) to remove. The runner's root surface area is what the player and the harness see; foreign files there confuse both. Subagents have an instruction to keep design rationale in their *response* to you, not in files; if you find such a file, that instruction was missed.
+
 **Tool ↔ characterizer coherence.** Cross-check the characterizer's \`config.json\` against the tool-builder's actual output, three classes of mismatch:
 
 - **Tool-name mismatches.** Compare tool names referenced in \`facilitatorPrompt\` and \`characterCreation.steps\` / \`groupSetup\` steps against the actual tools. Reference to a non-existent tool → either invented (delegate back to characterizer) or the tool-builder missed the mechanic (delegate back to tool-builder, naming the missing mechanic). A tool with no characterizer reference is probably invented — delegate back to remove.

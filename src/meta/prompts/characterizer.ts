@@ -139,7 +139,7 @@ For each game tool (you'll receive a tool inventory), write a subsection coverin
 
 - **When to use it** — narrative trigger in the fiction, not mechanical rule
 - **What to ask the player before calling it** — clarifying questions in the game's voice
-- **How to narrate each outcome tier** — 2–4 sentences per tier, in the game's voice, with concrete examples. The tool only supplies the tier label; the per-tier guidance has nowhere else to live but here. Use the tool's actual tier names (from its \`OutcomeTier\` type), not generic "success / partial / failure" assumptions.
+- **How to narrate each outcome tier** — 2–4 sentences of guidance per tier plus 2–4 concrete examples per tier, in the game's voice. The tool only supplies the tier label; the per-tier guidance has nowhere else to live but here. Use the tool's actual tier names (from its \`OutcomeTier\` type), not generic "success / partial / failure" assumptions. Each example should establish a *different texture* — don't pile up four variations on the same narration shape, because the facilitator at play time pattern-matches against the spread of examples and learns what the tier *can* feel like across situations. More than 4 examples per tier dilutes rather than enriches.
 - **How to interpret \`pressure\`, \`suggested_beats\`, and game-specific flags** — any flag a tool returns (\`fade_gained\`, \`lieutenant_claims_next\`, etc.) the facilitator is expected to react to needs explicit guidance here, or the flag lands silently and the mechanic degrades to cosmetic.
 - **Special results** — criticals, bonus triggers, miss-with-followthrough, etc., and what they mean narratively.
 
