@@ -37,6 +37,7 @@ The complete runner configuration:
   "description": "One-line description of the game",
   "facilitatorRole": "GM",
   "facilitatorPrompt": "The full per-game facilitator system prompt (see below)",
+  "openingMessage": "The pre-rendered first thing the player sees on a brand-new game (see below)",
   "characterCreation": {
     "steps": ["Step 1 description", "Step 2 description"],
     "choices": {
@@ -49,6 +50,25 @@ The complete runner configuration:
 Add any additional creation sections as needed (e.g., \`shipCreation\`, \`baseCreation\`, \`settingElements\`). These go as top-level fields alongside \`characterCreation\`.
 
 The \`facilitatorRole\` field MUST match the in-game role name you picked in Axis 4 — the exact word the game uses for the role (e.g. \`"GM"\`, \`"Lens"\`, \`"Cardinal"\`, \`"Alumni Coordinator"\`, \`"Host"\`). It's used by runtime subagents (the bookkeeper and future specialists) as context about who this facilitator is. Use the exact capitalisation the source material uses.
+
+### The \`openingMessage\` field
+
+This is the pre-rendered first thing the player sees when they start a brand-new game. The play harness displays it before the first agent call, so the player gets the game's voice instantly (no LLM-call latency on first impression) and every player sees a consistent, well-crafted opening rather than a re-rolled variant.
+
+Write this as the actual prose the player will read. **In the game's voice and tone**, with the in-game role name speaking. It should:
+
+- Set the game's tone in the first paragraph — atmosphere, register, attitude. If the game is doomed-noir, lead with doom; if it's whimsical, lead with whimsy; if it's procedural, lead with structure. Don't ask the player what tone they want when the source material is clearly committed to one.
+- Introduce the in-game role briefly ("I'm the Boss" / "I'm your Alumni Coordinator" / "We're playing Microscope together").
+- Convey the premise in 1-3 sentences — what kind of game this is, what the player is about to do.
+- Either invite the player to begin (open-ended: "What's your name?" or "Ready when you are.") or, for games whose source material has clearly committed to its own session-zero questions (tone, safety, scope), ask only those questions — don't force generic ones.
+
+The agent's first turn picks up from "the player has read the opening and just responded with X." The agent does NOT repeat or paraphrase your opening. So don't write the opening expecting the agent to add to it on the same beat — write it as the complete first message.
+
+**Length:** typically 2-6 short paragraphs. Long enough to set tone + invite engagement; short enough not to be a wall of text on first sight.
+
+**Voice match:** the opening must sound like the same speaker as the per-tier narration examples in your facilitatorPrompt. If they sound like different people, the player feels the seam at the transition between turn 1 (your opening) and turn 2 (the agent picking up). Read both back to back as a sanity check.
+
+**Do not** include the universal session-zero meta-questions ("what tone do you want? anything to avoid? planned arc or open-ended?") here unless the source material specifically asks for them. The play harness has a separate \`--player-preferences\` mechanism for testing-with-fixed-preferences; the facilitator prompt's universal session-zero flow handles the questions when no preferences file is supplied. Your opening should commit to the game's voice, not invite the player to choose it.
 
 ### 2. \`lore/summary.json\`
 
