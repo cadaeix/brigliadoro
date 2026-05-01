@@ -7,6 +7,7 @@ import { ORCHESTRATOR_PROMPT } from "./prompts/orchestrator.js";
 import { TOOL_BUILDER_PROMPT } from "./prompts/tool-builder.js";
 import { CHARACTERIZER_PROMPT } from "./prompts/characterizer.js";
 import { VALIDATOR_PROMPT } from "./prompts/validator.js";
+import { COHERENCE_AUDITOR_PROMPT } from "./prompts/coherence-auditor.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -58,22 +59,32 @@ interface ModelConfig {
   characterizer: AgentModel;
   /** Validator: writes tests, runs them, fixes failures. Mechanical work. */
   validator: AgentModel;
+  /**
+   * Coherence Auditor: verifies manifest source-grounding (each tool's
+   * source_ref.quote actually appears in the source as rules text),
+   * manifest/server consistency, and facilitator-prompt coherence.
+   * Read-only; greps the source rather than holding it in context, so
+   * scales to large sourcebooks. Mechanical claim-vs-evidence work — Haiku.
+   */
+  coherenceAuditor: AgentModel;
 }
 
 const MODEL_CONFIGS: Record<string, ModelConfig> = {
-  /** All Sonnet — cheapest, good baseline. */
+  /** All Sonnet — cheapest, good baseline. (Auditor stays Haiku — mechanical.) */
   default: {
     orchestrator: "sonnet",
     toolBuilder: "sonnet",
     characterizer: "sonnet",
     validator: "sonnet",
+    coherenceAuditor: "haiku",
   },
-  /** Opus for judgment calls, Sonnet for code, Haiku for validation. */
+  /** Opus for judgment calls, Sonnet for code, Haiku for validation/audit. */
   quality: {
     orchestrator: "opus",
     toolBuilder: "sonnet",
     characterizer: "opus",
     validator: "haiku",
+    coherenceAuditor: "haiku",
   },
 };
 
@@ -169,7 +180,7 @@ async function main() {
   console.log(`\n🎲 Meta-TTRPGinator starting`);
   console.log(`   Source: ${sourcebookPath}`);
   console.log(`   Output: ${runnerDir}`);
-  console.log(`   Models: ${modelPreset} (orchestrator=${models.orchestrator}, tools=${models.toolBuilder}, characterizer=${models.characterizer}, validator=${models.validator})\n`);
+  console.log(`   Models: ${modelPreset} (orchestrator=${models.orchestrator}, tools=${models.toolBuilder}, characterizer=${models.characterizer}, validator=${models.validator}, auditor=${models.coherenceAuditor})\n`);
 
   const prompt = `Read the TTRPG sourcebook at "${sourcebookPath}" and generate a complete runner in the directory "${runnerDir}".
 
@@ -215,6 +226,13 @@ Follow your orchestration protocol: read the sourcebook, analyze it, then delega
           tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
           prompt: VALIDATOR_PROMPT,
           model: models.validator,
+        },
+        "coherence-auditor": {
+          description:
+            "Audit tools/manifest.json against the sourcebook and config.json. Verifies source_ref.quote claims (each tool's quote appears in the source and is rules text, not fiction), manifest/server consistency, and facilitator-prompt coherence with the manifest. Read-only — returns a structured JSON report; does not fix issues. Use after tool-builder, characterizer, and validator have all completed.",
+          tools: ["Read", "Glob", "Grep"],
+          prompt: COHERENCE_AUDITOR_PROMPT,
+          model: models.coherenceAuditor,
         },
       },
     },

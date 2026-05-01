@@ -106,37 +106,42 @@ Use Glob and Read to confirm expected files exist:
 - \`lore/summary.json\` exists
 - \`config.json\` exists with \`facilitatorPrompt\` and \`characterCreation\`
 
-If a tool file has no corresponding \`.triggers.json\`, delegate back to the tool-builder. The trigger-eval corpus is load-bearing, not optional.
-
-**Manifest sanity check.** You already loaded \`tools/manifest.json\` in Step 3. Confirm it covers every tool wired into \`server.ts\` (by name) and that no manifest entry references a tool not in \`server.ts\`. Mismatch = one of:
-
-- A wired tool with no manifest entry (tool-builder skipped manifest discipline for it) — delegate back to add the entry.
-- A manifest entry for a non-existent tool (tool-builder removed the tool but forgot the manifest entry) — delegate back to remove.
-
-**Source-grounding spot-check (the part this catches that nothing else does).** For every manifest entry, read its \`source_ref.quote\`. Three flags:
-
-- **Empty quote.** Unless the \`summary\` clearly explains a structural-utility carve-out, an empty quote means the tool is invented — delegate back to remove or to find the supporting rules text.
-- **Quote is fiction, not rules.** If the quote reads as narrative ("Sara turns to face her opponent…"), as flavour ("the night is dangerous and full of terrors"), or as designer commentary ("we wanted this to feel cinematic"), it's the wrong kind of evidence. Rules text describes a mechanic procedure — numbered outcomes, threshold tables, resource definitions, action sequences. Delegate back asking the tool-builder to either find rules text or remove the tool.
-- **Two tools quote the same rules text.** If two manifest entries cite identical or near-identical source quotes, they're probably one mechanic split into two coordinating tools. Delegate back to consolidate (usually merging into one pausable tool).
-
-This spot-check is the *operative* anti-invention discipline — better than any prose warning in the tool-builder's prompt because it's a structural cross-check happening in your fresh-context view of the manifest. Don't skip it. The cost of one minute reading \`source_ref\` fields is much less than the cost of an invented tool reaching play.
-
-**Orphan tool files.** List every \`.ts\` in \`tools/\` other than \`server.ts\`. For each, check whether \`server.ts\` imports it. An orphan is one of two bugs:
-
-- Dead code the tool-builder forgot to clean up — delegate back to remove.
-- A tool that should be wired but isn't — delegate back to add the import + factory call.
-
 **Orphan root-level files.** List every file directly in the runner root. The expected set is exactly: \`config.json\`, \`package.json\`, \`play.ts\`, and \`package-lock.json\` (if npm install ran), plus the directories \`tools/\`, \`evals/\`, \`tests/\`, \`lore/\`, \`state/\`, \`lib/\`, and \`node_modules/\` (if present). Anything else — \`README.md\`, \`NOTES.md\`, \`TOOLS_README.md\`, design-rationale files, etc. — is a subagent leaking out of its scope. Delegate back to the responsible subagent to remove. The runner's root surface area is what the player and the harness see; foreign files there confuse both.
 
-**Tool ↔ characterizer coherence.** Use the manifest as your reference, since it carries the canonical \`outcome_tiers\` and \`flags\` for each tool:
+### Step 7: Delegate to coherence-auditor
 
-- **Tool-name mismatches.** Compare tool names referenced in \`facilitatorPrompt\` and \`characterCreation.steps\` / \`groupSetup\` steps against the manifest's \`tools[].name\` list. Reference to a name not in the manifest → either characterizer invented it (delegate back to characterizer) or the tool-builder missed the mechanic and the characterizer noticed (delegate back to tool-builder with the missing mechanic specified). A manifest entry with no characterizer reference is suspicious — delegate back to characterizer to either reference it or to tool-builder to remove it.
-- **Outcome-tier mismatches.** For each tool the characterizer narrates, confirm the per-tier guidance uses the exact \`outcome_tiers\` values from that tool's manifest entry. Mismatch = facilitator at play time sees tier strings the prompt doesn't match → improvises. Delegate back with the exact tier names from the manifest.
-- **Game-specific flag coverage.** For each entry in a tool's manifest \`flags\` field, confirm the characterizer's tool-usage guidance explains how to interpret and narrate it. Uncovered flag = mechanic degrades to cosmetic.
+The auditor verifies three categories of claim that you used to check inline: source-grounding (each \`source_ref.quote\` appears in the source as rules text, not fiction or flavour), manifest consistency (every wired tool has a manifest entry and a sibling triggers corpus), and facilitator coherence (the characterizer's prompt references manifest tool names, narrates the manifest's exact outcome-tier strings, covers every game-specific flag).
 
-These checks are what makes generation actually shippable. Skipping them strands the facilitator at play time with no way to recover.
+Delegating frees you from holding the source in context for verification — the auditor greps the source for distinctive phrases from each quote, reads narrow context windows, classifies, and reports. The pattern scales to large sourcebooks where holding everything in your head doesn't.
 
-Report completion with a summary of what was generated.
+Send the auditor:
+- The runner directory path
+- The sourcebook path (or directory, for multi-file sources)
+
+The auditor returns a single JSON object matching \`AuditorReportSchema\` (defined in \`src/meta/auditor.ts\`). Parse it. The structure carries:
+
+- \`overall_severity\`: \`"ok"\` | \`"warnings_only"\` | \`"has_blockers"\`
+- \`source_grounding.per_tool\`: per-tool grounding result with \`severity\` and \`issues\`
+- \`source_grounding.duplicate_quotes\`: tools sharing distinctive substrings
+- \`manifest_consistency.issues\`: housekeeping mismatches between manifest, \`server.ts\`, and \`evals/\`
+- \`facilitator_coherence.issues\`: tool-name / outcome-tier / flag-coverage issues
+- \`summary\`: human-readable digest
+
+### Step 8: Route auditor findings
+
+If \`overall_severity === "ok"\`: nothing to do. Report completion with a summary of what was generated, including the auditor summary.
+
+If \`overall_severity === "warnings_only"\`: surface the warnings in your final report to the human, but do not re-delegate. Warnings are typically PDF-extraction artefacts (a quote the auditor's grep couldn't find but is probably present) or harmless lint (a tool with no prompt reference that's intentional).
+
+If \`overall_severity === "has_blockers"\`: route fixes by issue category, then re-run the auditor.
+
+- **Source-grounding blockers** — \`severity: "blocker"\` entries in \`source_grounding.per_tool\` (quote is fiction / flavour / commentary, or empty without structural justification), and \`source_grounding.duplicate_quotes\` blockers. Route to **tool-builder** with specific fix instructions: which tool, what's wrong with its quote, what to do (find rules text or remove the tool; consolidate duplicated mechanics into one pausable tool).
+- **Manifest consistency blockers** — \`wired_tool_without_manifest_entry\`, \`manifest_entry_without_wired_tool\`, \`tool_file_without_eval_corpus\`. Route to **tool-builder**.
+- **Facilitator coherence blockers** — \`tool_name_unknown_in_manifest\`, \`outcome_tier_mismatch\`. Route to **characterizer** with the exact corrections (tier names from the manifest, etc.). The exception is \`tool_name_unknown_in_manifest\` where the tool-builder is the culprit (the characterizer named a real mechanic that the tool-builder failed to ship); judge from context which side has the bug.
+
+After fixes, re-run the auditor. Iterate up to 3 rounds. If blockers persist after 3 rounds, surface as a final-report blocker for human review rather than spinning indefinitely.
+
+Report completion with a summary of what was generated and the final auditor severity / summary.
 
 ## Runner directory structure
 
@@ -171,5 +176,6 @@ The discipline: *if a subagent will transcribe it into a generated artefact, it 
 ## Sequencing
 
 - The tool-builder finishes before the characterizer starts (it needs the tool inventory for Step 4).
+- The coherence-auditor (Step 7) runs after tool-builder, characterizer, and validator have all completed — it reads the manifest, \`config.json\`, and the source.
 - Be thorough in your sourcebook analysis — your subagents only know what you tell them.
 `;
