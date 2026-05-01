@@ -93,7 +93,8 @@ Read the manifest, the source, config.json, server.ts, and the tool / eval direc
 
 Return a single JSON object validating against AuditorReportSchema. JSON only — no preamble, no markdown fences.`;
 
-  let lastResponse = "";
+  let streamedText = "";
+  let finalResult = "";
   for await (const message of query({
     prompt,
     options: {
@@ -110,18 +111,31 @@ Return a single JSON object validating against AuditorReportSchema. JSON only �
           text?: string;
         }>) {
           if (block.type === "text" && block.text) {
-            lastResponse += block.text;
+            streamedText += block.text;
           }
         }
+      } else if (message.type === "result") {
+        const r = message as { result?: string; subtype?: string };
+        finalResult = r.result ?? "";
       }
     }
   }
 
+  // Prefer streamed assistant text; fall back to the result message's
+  // synthesized final answer. SDK behaviour can put the whole response in
+  // either place depending on how the model ended its turn (tool calls
+  // followed by a final text block vs. tool calls then a synthesized
+  // result-message answer).
+  const lastResponse = streamedText.trim() || finalResult.trim();
+
   // The auditor returns JSON. Extract it; tolerate accidental fences or preamble.
   const json = extractJsonObject(lastResponse);
   if (!json) {
-    console.error("\n❌ Auditor did not return a JSON object. Raw response:\n");
-    console.error(lastResponse);
+    console.error("\n❌ Auditor did not return a JSON object.\n");
+    console.error(`Streamed assistant text (${streamedText.length} chars):`);
+    console.error(streamedText || "<empty>");
+    console.error(`\nFinal result message (${finalResult.length} chars):`);
+    console.error(finalResult || "<empty>");
     process.exit(1);
   }
 

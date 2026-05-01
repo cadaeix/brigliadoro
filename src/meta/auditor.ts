@@ -43,13 +43,19 @@ import { z } from "zod";
  * Whether the manifest entry's `source_ref.quote` was found in the source
  * via grep + context-window read.
  *
- * `not_found` is more often a PDF-extraction issue (curly vs straight
- * quotes, hyphenation across line breaks, OCR errors) than a tool-builder
- * lie. The auditor flags it; the orchestrator surfaces it; the human
- * decides.
+ * - `verbatim` — quote appears in source as-is (modulo trivial whitespace).
+ * - `near_match` — distinctive phrases hit, but with paraphrase / formatting
+ *   drift / minor word changes. Usually fine; sometimes signals a rule the
+ *   tool-builder slightly mis-transcribed.
+ * - `not_found` — grep failed to find the quote at all. More often a
+ *   PDF-extraction issue (curly vs straight quotes, hyphenation across
+ *   line breaks, OCR errors) than a tool-builder lie. The auditor flags
+ *   it; the orchestrator surfaces it; the human decides.
+ * - `empty` — `source_ref.quote` is the empty string. Legitimate only
+ *   when paired with `quote_kind: structural_carve_out`.
  */
 export const QuoteStatusSchema = z.enum([
-  "verbatim_match",
+  "verbatim",
   "near_match",
   "not_found",
   "empty",
@@ -86,6 +92,28 @@ export const SeveritySchema = z.enum(["ok", "warning", "blocker"]);
 export type Severity = z.infer<typeof SeveritySchema>;
 
 /**
+ * A single observation about a tool's source-grounding. The `type` is a
+ * short label ("formatting_difference", "fiction_passage", "missing_qualifier",
+ * etc.) — auditor-defined, not enumerated, so new categories can emerge from
+ * what the auditor actually finds without schema churn. `detail` is the
+ * human-readable explanation.
+ */
+export const ToolGroundingIssueSchema = z.object({
+  type: z
+    .string()
+    .min(1)
+    .describe(
+      "Short snake_case label categorising the issue " +
+        "(e.g. 'formatting_difference', 'fiction_passage', 'missing_qualifier')."
+    ),
+  detail: z
+    .string()
+    .min(1)
+    .describe("Human-readable explanation of the issue."),
+});
+export type ToolGroundingIssue = z.infer<typeof ToolGroundingIssueSchema>;
+
+/**
  * Per-tool source-grounding finding. One entry per manifest tool, even if
  * the entry is clean — gives the orchestrator a complete audit picture
  * rather than only-bad-news.
@@ -112,10 +140,10 @@ export const ToolGroundingResultSchema = z.object({
         "Format is auditor-defined; meant for human review, not machine parsing."
     ),
   issues: z
-    .array(z.string())
+    .array(ToolGroundingIssueSchema)
     .describe(
-      "Plain-language notes from the auditor explaining the classification or any concerns. " +
-        "Empty array if everything is fine."
+      "Structured observations about the classification or any concerns. " +
+        "Empty array if the entry is clean."
     ),
   severity: SeveritySchema,
 });
@@ -145,14 +173,27 @@ export type DuplicateQuote = z.infer<typeof DuplicateQuoteSchema>;
  * Issues the auditor finds when cross-referencing manifest, server.ts,
  * tool files, and eval corpora — the housekeeping that runs cheap on the
  * same inputs as the source-grounding pass.
+ *
+ * `kind` is a free-form snake_case label. Common values:
+ *   - `wired_tool_without_manifest_entry`
+ *   - `manifest_entry_without_wired_tool`
+ *   - `tool_file_without_eval_corpus`
+ *   - `eval_corpus_without_tool_file`
+ *
+ * Free-form rather than strict-enum because the auditor is a Haiku agent
+ * whose natural labels vary; routing happens on `severity` and the issue's
+ * location in the report tree (this list = manifest issue → tool-builder),
+ * not on the exact `kind` string. Strict enums lost too many runs to
+ * label drift like `eval_corpus_without_tool_file_mismatch`.
  */
 export const ManifestConsistencyIssueSchema = z.object({
-  kind: z.enum([
-    "wired_tool_without_manifest_entry",
-    "manifest_entry_without_wired_tool",
-    "tool_file_without_eval_corpus",
-    "eval_corpus_without_tool_file",
-  ]),
+  kind: z
+    .string()
+    .min(1)
+    .describe(
+      "Short snake_case label for the issue. See common values in the " +
+        "schema docstring; the auditor may use other descriptive labels."
+    ),
   detail: z
     .string()
     .describe("What was missing or extra, named explicitly."),
@@ -166,14 +207,23 @@ export type ManifestConsistencyIssue = z.infer<
  * Issues the auditor finds when reading `config.json` and cross-checking
  * the characterizer's prompt against the manifest. These route to the
  * characterizer for fixes, not the tool-builder.
+ *
+ * `kind` is a free-form snake_case label. Common values:
+ *   - `tool_name_unknown_in_manifest` — prompt mentions a tool not in manifest
+ *   - `manifest_tool_unreferenced_in_prompt` — manifest tool with no prompt reference
+ *   - `outcome_tier_mismatch` — per-tier narration uses tier strings the manifest doesn't declare
+ *   - `uncovered_flag` — manifest flag with no narration guidance
+ *
+ * Free-form rather than strict-enum: see ManifestConsistencyIssueSchema.
  */
 export const FacilitatorCoherenceIssueSchema = z.object({
-  kind: z.enum([
-    "tool_name_unknown_in_manifest",
-    "manifest_tool_unreferenced_in_prompt",
-    "outcome_tier_mismatch",
-    "uncovered_flag",
-  ]),
+  kind: z
+    .string()
+    .min(1)
+    .describe(
+      "Short snake_case label for the issue. See common values in the " +
+        "schema docstring; the auditor may use other descriptive labels."
+    ),
   tool: z
     .string()
     .optional()
@@ -184,8 +234,8 @@ export const FacilitatorCoherenceIssueSchema = z.object({
   detail: z
     .string()
     .describe(
-      "Specific detail — for outcome_tier_mismatch, list both the manifest's tiers " +
-        "and what the prompt narrates; for uncovered_flag, name the flag."
+      "Specific detail — for outcome-tier issues, list both the manifest's " +
+        "tiers and what the prompt narrates; for flag issues, name the flag."
     ),
   severity: SeveritySchema,
 });

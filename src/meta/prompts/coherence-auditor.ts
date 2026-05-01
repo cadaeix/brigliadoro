@@ -74,7 +74,7 @@ For each \`tools[].source_ref\`:
 3. **Grep each distinctive substring** against the matched files. The strongest evidence is a hit on multiple substrings within a small line range — that's almost certainly the passage the tool-builder quoted from.
 
 4. **Read narrow context** around the strongest hit — about 10 lines before and after. You're looking at:
-   - Does the surrounding text contain the rest of the quote? Verbatim → \`verbatim_match\`. Most of it modulo whitespace / punctuation → \`near_match\`. Fragments only → \`not_found\`.
+   - Does the surrounding text contain the rest of the quote? Verbatim → \`verbatim\`. Most of it modulo whitespace / punctuation → \`near_match\`. Fragments only → \`not_found\`.
    - What kind of text is this? Use the rules below.
 
 5. **Classify \`quote_kind\`:**
@@ -87,7 +87,7 @@ For each \`tools[].source_ref\`:
    - \`unknown\` — if you genuinely can't tell. Use sparingly; surface the matched passage in the report so a human can decide.
 
 6. **Severity:**
-   - \`rules\` + \`verbatim_match\` or \`near_match\` → \`ok\`.
+   - \`rules\` + \`verbatim\` or \`near_match\` → \`ok\`.
    - \`rules\` + \`not_found\` → \`warning\` (likely PDF artefact; flag for human).
    - Anything other than \`rules\` (with the structural_carve_out exception) → \`blocker\`. The tool is built on the wrong evidence.
 
@@ -103,26 +103,28 @@ Two tools quoting the same source passage usually means one mechanic was split i
 - Compare against the manifest's \`tools[].file\` and \`tools[].name\` fields.
 - List \`<runner-dir>/evals/*.triggers.json\`. Compare against the manifest's tool files (one corpus per tool file is the rule, even if a file declares multiple tools).
 
-Each mismatch becomes a \`ManifestConsistencyIssue\`. Severity: \`blocker\` if it would break runtime (wired tool with no manifest entry, manifest entry for a non-existent file). \`warning\` if it's lint-level (orphan file the auditor can't determine intent for).
+Each mismatch becomes a \`ManifestConsistencyIssue\` with a short snake_case \`kind\` label of your choice. Common labels: \`wired_tool_without_manifest_entry\`, \`manifest_entry_without_wired_tool\`, \`tool_file_without_eval_corpus\`, \`eval_corpus_without_tool_file\`. Use one of those when it fits; pick something descriptive otherwise. Severity: \`blocker\` if it would break runtime (wired tool with no manifest entry, manifest entry for a non-existent file). \`warning\` if it's lint-level (orphan file the auditor can't determine intent for).
 
 ### Step 5: Facilitator coherence
 
 Read \`<runner-dir>/config.json\`. Three sub-passes:
 
+Each issue is a \`FacilitatorCoherenceIssue\` with a short snake_case \`kind\` label. Common labels: \`tool_name_unknown_in_manifest\`, \`manifest_tool_unreferenced_in_prompt\`, \`outcome_tier_mismatch\`, \`uncovered_flag\`. Use one when it fits; pick something descriptive otherwise.
+
 **Tool-name references.** Scan \`facilitatorPrompt\`, \`characterCreation.steps\`, and any other top-level setup sections for tool-name mentions. The convention is snake_case names matching \`manifest.tools[].name\`. For each name found:
 
 - Name in manifest → ok.
-- Name not in manifest → \`tool_name_unknown_in_manifest\`, \`severity: blocker\`. The characterizer either invented a tool or the tool-builder removed one without telling the characterizer.
+- Name not in manifest → \`severity: blocker\`. The characterizer either invented a tool or the tool-builder removed one without telling the characterizer.
 
 For each manifest tool, check whether *some* prompt section references it:
 
-- Tool with no prompt reference → \`manifest_tool_unreferenced_in_prompt\`, \`severity: warning\`. Possibly intentional (a setup-phase tool the facilitator only invokes during character creation); possibly a gap.
+- Tool with no prompt reference → \`severity: warning\`. Possibly intentional (a setup-phase tool the facilitator only invokes during character creation); possibly a gap.
 
-**Outcome-tier strings.** For each tool's per-tier narration in the prompt's tool-usage section, the tier strings being narrated should be exactly the manifest's \`outcome_tiers\` values for that tool. Common drift: manifest says \`["clean", "bent", "screwed", "disaster"]\` but the prompt narrates \`success / partial / failure\`. Each mismatch is \`outcome_tier_mismatch\`, \`severity: blocker\`.
+**Outcome-tier strings.** For each tool's per-tier narration in the prompt's tool-usage section, the tier strings being narrated should be exactly the manifest's \`outcome_tiers\` values for that tool. Common drift: manifest says \`["clean", "bent", "screwed", "disaster"]\` but the prompt narrates \`success / partial / failure\`. Each mismatch is \`severity: blocker\`.
 
 The exception: a tool whose \`outcome_tiers\` is exactly \`["generated"]\` (a pure content generator) doesn't need per-tier narration — the prompt narrates the generated content, not a tier interpretation. Don't flag those.
 
-**Flag coverage.** For each tool's manifest \`flags\` array, search the prompt for explicit guidance on that flag. Doesn't need to be the exact identifier — narrative paraphrase is fine — but the flag's *meaning* must be addressed somewhere in the tool's prompt section. A flag with no addressing → \`uncovered_flag\`, \`severity: warning\` (a flag that's never narrated degrades to cosmetic, but it's not a runtime failure).
+**Flag coverage.** For each tool's manifest \`flags\` array, search the prompt for explicit guidance on that flag. Doesn't need to be the exact identifier — narrative paraphrase is fine — but the flag's *meaning* must be addressed somewhere in the tool's prompt section. A flag with no addressing → \`severity: warning\` (a flag that's never narrated degrades to cosmetic, but it's not a runtime failure).
 
 ### Step 6: Assemble the report
 
@@ -132,17 +134,41 @@ Output a single JSON object matching \`AuditorReportSchema\` (described in \`src
 {
   "runner_name": "...",
   "source_grounding": {
-    "per_tool": [ { tool_name, quote_status, quote_kind, matched_passage?, source_locator?, issues, severity } ],
-    "duplicate_quotes": [ { quote_substring, tools, severity } ]
+    "per_tool": [
+      {
+        "tool_name": "...",
+        "quote_status": "verbatim" | "near_match" | "not_found" | "empty",
+        "quote_kind": "rules" | "fiction" | "flavour" | "commentary" | "structural_carve_out" | "unknown",
+        "matched_passage": "...",          // optional; omit when not_found / empty / structural_carve_out
+        "source_locator": "...",           // optional; e.g. "goodfellows.md lines 106-141"
+        "issues": [
+          { "type": "snake_case_label", "detail": "human-readable explanation" }
+        ],
+        "severity": "ok" | "warning" | "blocker"
+      }
+    ],
+    "duplicate_quotes": [
+      { "quote_substring": "...", "tools": ["a", "b"], "severity": "warning" | "blocker" }
+    ]
   },
-  "manifest_consistency": { "issues": [ { kind, detail, severity } ] },
-  "facilitator_coherence": { "issues": [ { kind, tool?, detail, severity } ] },
+  "manifest_consistency": {
+    "issues": [
+      { "kind": "snake_case_label", "detail": "...", "severity": "warning" | "blocker" }
+    ]
+  },
+  "facilitator_coherence": {
+    "issues": [
+      { "kind": "snake_case_label", "tool": "...", "detail": "...", "severity": "warning" | "blocker" }
+    ]
+  },
   "overall_severity": "ok" | "warnings_only" | "has_blockers",
   "summary": "..."
 }
 \`\`\`
 
-Include one \`ToolGroundingResult\` per manifest tool, even if everything's fine — the orchestrator wants a complete audit, not just bad news. Use \`severity: ok\` and an empty \`issues\` array for clean entries.
+**Per-tool \`issues\` shape**: each entry is an object with \`type\` (a short snake_case label like \`formatting_difference\`, \`fiction_passage\`, \`missing_qualifier\` — your choice, descriptive) and \`detail\` (the explanation in plain language). Don't emit bare strings; always wrap as \`{ type, detail }\`.
+
+Include one \`ToolGroundingResult\` per manifest tool, even if everything's fine — the orchestrator wants a complete audit, not just bad news. Use \`severity: "ok"\` and an empty \`issues\` array for clean entries.
 
 \`overall_severity\` follows from the constituent severities:
 - Any \`blocker\` anywhere → \`has_blockers\`.
