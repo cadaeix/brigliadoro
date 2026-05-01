@@ -1,0 +1,4 @@
+[
+  { "prompt": "The post arrives.", "should_trigger": true, "note": "letter arrival" },
+  { "prompt": "She thinks about the last letter.", "should_trigger": false, "note": "reflection" }
+]

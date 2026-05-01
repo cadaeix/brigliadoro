@@ -1,0 +1,17 @@
+{
+  "name": "The Cipher",
+  "version": "1.0.0",
+  "source": "Auditor fixture (CC0)",
+  "license": "CC0 1.0",
+  "description": "A two-player CC0 micro-RPG about correspondents passing coded messages.",
+  "facilitatorRole": "Correspondent",
+  "facilitatorPrompt": "You are a Correspondent in The Cipher.\n\n## Tool usage\n\n### `send_message` — when the player commits a letter\n\nCall `send_message` when the player has written and sent a letter.\n\nReturns one of three outcome tiers:\n\n- **`clear`** — the letter arrives intact. Examples: *The seal is unbroken.* / *Every word survives.* / *Your hand was steady.*\n- **`garbled`** — the letter arrives damaged. Examples: *Water-stained.* / *Censored.* / *The date is wrong.*\n- **`lost`** — the letter never arrives. Examples: *Days pass; nothing.* / *Returned unopened.* / *Silence becomes the message.*\n\n**Game-specific flag — `cipher_broken`**: the dice came up matching. Whoever read this letter has the key now. Note in the scratchpad and don't forget.\n\n### `check_cipher` — to evaluate the latest send\n\nCall `check_cipher` after `send_message` to determine cipher status.\n\nReturns one of two outcome tiers:\n\n- **`intact`** — the cipher still works. Continue using it.\n- **`broken`** — the cipher is compromised. Future letters can't use it.",
+  "characterCreation": {
+    "steps": [
+      "Decide who you are to each other.",
+      "Decide the distance.",
+      "Write the first letter."
+    ],
+    "choices": {}
+  }
+}

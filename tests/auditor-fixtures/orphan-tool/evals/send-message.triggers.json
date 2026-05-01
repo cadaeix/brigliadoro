@@ -1,0 +1,17 @@
+[
+  {
+    "prompt": "I write to Marguerite about the defection.",
+    "should_trigger": true,
+    "note": "act of writing/sending a letter"
+  },
+  {
+    "prompt": "I seal the envelope and hand it to the courier.",
+    "should_trigger": true,
+    "note": "letter committed to the post"
+  },
+  {
+    "prompt": "I dip my pen and consider what to say.",
+    "should_trigger": false,
+    "note": "near-miss: composing, not yet sending"
+  }
+]

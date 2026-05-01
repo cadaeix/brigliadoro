@@ -126,9 +126,13 @@ The exception: a tool whose \`outcome_tiers\` is exactly \`["generated"]\` (a pu
 
 **Flag coverage.** For each tool's manifest \`flags\` array, search the prompt for explicit guidance on that flag. Doesn't need to be the exact identifier — narrative paraphrase is fine — but the flag's *meaning* must be addressed somewhere in the tool's prompt section. A flag with no addressing → \`severity: warning\` (a flag that's never narrated degrades to cosmetic, but it's not a runtime failure).
 
-### Step 6: Assemble the report
+### Step 6: Assemble the full report
 
-Output a single JSON object matching \`AuditorReportSchema\` (described in \`src/meta/auditor.ts\`). The structure:
+Output **exactly one JSON object** matching \`AuditorReportSchema\` (described in \`src/meta/auditor.ts\`). This is the entire audit, not a fragment. Do not output the manifest, do not output an individual tool entry, do not output partial results — output the complete report with **all five top-level fields present**: \`runner_name\`, \`source_grounding\`, \`manifest_consistency\`, \`facilitator_coherence\`, \`overall_severity\`, and \`summary\`.
+
+When a category surfaced no findings, the corresponding array is empty (\`"issues": []\`) — but the field still exists. When you found something unusual on one tool (an invented one, a fiction quote, a missing piece), keep going through the remaining tools and complete the full audit before producing the report. Stopping early after one finding produces an unparseable response and the audit has to be re-run.
+
+Structure:
 
 \`\`\`json
 {

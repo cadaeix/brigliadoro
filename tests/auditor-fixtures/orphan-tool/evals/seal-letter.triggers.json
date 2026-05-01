@@ -1,0 +1,4 @@
+[
+  { "prompt": "I melt the wax and press the seal.", "should_trigger": true, "note": "sealing the envelope" },
+  { "prompt": "I open the letter.", "should_trigger": false, "note": "unrelated action" }
+]

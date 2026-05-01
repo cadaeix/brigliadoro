@@ -59,4 +59,108 @@ describe("coherence auditor — fixture suite", () => {
     },
     PER_TEST_TIMEOUT_MS
   );
+
+  it(
+    "fiction-quote fixture: send_message's quote points at the play-example",
+    async () => {
+      const report = await auditFixture("fiction-quote");
+      expect(report.overall_severity).toBe("has_blockers");
+
+      const culprit = report.source_grounding.per_tool.find(
+        (t) => t.tool_name === "send_message"
+      );
+      expect(culprit, "expected a per_tool entry for send_message").toBeDefined();
+      expect(culprit!.quote_kind).toBe("fiction");
+      expect(culprit!.severity).toBe("blocker");
+    },
+    PER_TEST_TIMEOUT_MS
+  );
+
+  it(
+    "duplicate-quote fixture: two tools cite the same passage",
+    async () => {
+      const report = await auditFixture("duplicate-quote");
+      expect(report.overall_severity).toBe("has_blockers");
+
+      // The signature finding is at least one entry in duplicate_quotes
+      // covering both manifest tools.
+      expect(report.source_grounding.duplicate_quotes.length).toBeGreaterThanOrEqual(1);
+      const dup = report.source_grounding.duplicate_quotes[0]!;
+      expect(dup.tools).toContain("send_message");
+      expect(dup.tools).toContain("check_cipher");
+      expect(dup.severity).toBe("blocker");
+    },
+    PER_TEST_TIMEOUT_MS
+  );
+
+  it(
+    "tier-mismatch fixture: prompt narrates wrong tier names",
+    async () => {
+      const report = await auditFixture("tier-mismatch");
+      expect(report.overall_severity).toBe("has_blockers");
+
+      // A facilitator-coherence blocker should land for send_message
+      // (manifest declares clear/garbled/lost; prompt narrates success/partial/failure).
+      const blocker = report.facilitator_coherence.issues.find(
+        (i) => i.severity === "blocker"
+      );
+      expect(blocker, "expected a facilitator-coherence blocker").toBeDefined();
+    },
+    PER_TEST_TIMEOUT_MS
+  );
+
+  it(
+    "uncovered-flag fixture: cipher_broken declared in manifest but not narrated",
+    async () => {
+      const report = await auditFixture("uncovered-flag");
+
+      // Severity is warning-or-blocker (auditor's call); the issue must surface.
+      expect(report.overall_severity).not.toBe("ok");
+
+      const flagIssue = report.facilitator_coherence.issues.find((i) =>
+        /cipher_broken|flag/i.test(i.detail) ||
+        (i.kind && /flag|coverage/i.test(i.kind))
+      );
+      expect(
+        flagIssue,
+        "expected an uncovered-flag finding mentioning cipher_broken"
+      ).toBeDefined();
+    },
+    PER_TEST_TIMEOUT_MS
+  );
+
+  it(
+    "orphan-tool fixture: server.ts wires a tool not in the manifest",
+    async () => {
+      const report = await auditFixture("orphan-tool");
+      expect(report.overall_severity).toBe("has_blockers");
+
+      // The wired-but-unmanifested tool should surface in manifest_consistency.
+      const orphanIssue = report.manifest_consistency.issues.find((i) =>
+        /seal_letter|seal-letter/i.test(i.detail)
+      );
+      expect(
+        orphanIssue,
+        "expected a manifest-consistency issue mentioning seal_letter"
+      ).toBeDefined();
+      expect(orphanIssue!.severity).toBe("blocker");
+    },
+    PER_TEST_TIMEOUT_MS
+  );
+
+  it(
+    "empty-quote-invented fixture: a tool with empty source_ref.quote and no structural carve-out",
+    async () => {
+      const report = await auditFixture("empty-quote-invented");
+      expect(report.overall_severity).toBe("has_blockers");
+
+      const invented = report.source_grounding.per_tool.find(
+        (t) => t.tool_name === "track_emotional_distance"
+      );
+      expect(invented, "expected per_tool entry for track_emotional_distance").toBeDefined();
+      expect(invented!.quote_status).toBe("empty");
+      expect(invented!.severity).toBe("blocker");
+    },
+    PER_TEST_TIMEOUT_MS
+  );
 });

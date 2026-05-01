@@ -1,0 +1,4 @@
+[
+  { "prompt": "I send the letter.", "should_trigger": true, "note": "send moment" },
+  { "prompt": "I think about writing.", "should_trigger": false, "note": "near-miss: composing" }
+]

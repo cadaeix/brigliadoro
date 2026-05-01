@@ -1,0 +1,4 @@
+[
+  { "prompt": "I write to her about the defection.", "should_trigger": true, "note": "writing/sending" },
+  { "prompt": "I dip my pen and consider what to say.", "should_trigger": false, "note": "near-miss: composing" }
+]

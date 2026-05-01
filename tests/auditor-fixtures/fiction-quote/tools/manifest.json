@@ -1,0 +1,40 @@
+{
+  "game_name": "The Cipher (fiction-quote variant)",
+  "version": 1,
+  "tools": [
+    {
+      "name": "send_message",
+      "file": "send-message.ts",
+      "description": "Roll when a correspondent commits a letter to the post.",
+      "params": {
+        "sender_name": "Name of the correspondent."
+      },
+      "outcome_tiers": ["clear", "garbled", "lost"],
+      "flags": ["cipher_broken"],
+      "shape": "one-shot",
+      "resources_emitted": [],
+      "resources_consumed": [],
+      "source_ref": {
+        "summary": "The core resolution roll — 2d6, read high die.",
+        "quote": "Léon and Marguerite are correspondents in opposite corners of an empire at war with itself. Léon writes to Marguerite about a defection. He rolls 2d6 and gets a 5 and a 5 — Garbled, and the cipher is broken. The letter arrives. Marguerite reads _\"____ has crossed the Vistula ____ no, wait, the city is ____ no ____\"_ and the rest is illegible. She also sees that the envelope was opened. She knows the cipher is broken; whoever read this letter has the key. She has to reply. She can't use the cipher. She writes openly, knowing whoever is reading it will read this too. She writes about the weather.",
+        "page_or_section": "A worked example"
+      }
+    },
+    {
+      "name": "roll_complication",
+      "file": "roll-complication.ts",
+      "description": "Roll when a letter arrives, before reading.",
+      "params": {},
+      "outcome_tiers": ["generated"],
+      "flags": [],
+      "shape": "one-shot",
+      "resources_emitted": [],
+      "resources_consumed": [],
+      "source_ref": {
+        "summary": "A d6 random table of complications.",
+        "quote": "When the letter arrives, before reading, roll d6 on the complications table: 1. The post was searched. The seal is wrong; someone has read this first. 2. The letter is months late. What it describes is no longer true. 3. The handwriting is not your correspondent's. Someone is replying for them. 4. There is a second letter in the envelope, addressed to you, signed by no-one. 5. The paper is from a place neither of you have been. 6. No complication. The letter arrives as it left.",
+        "page_or_section": "Complications"
+      }
+    }
+  ]
+}

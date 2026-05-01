@@ -1,0 +1,17 @@
+[
+  {
+    "prompt": "The post arrives at her door.",
+    "should_trigger": true,
+    "note": "letter arrival; roll before reading"
+  },
+  {
+    "prompt": "She finds the envelope on the hall table.",
+    "should_trigger": true,
+    "note": "moment of receipt"
+  },
+  {
+    "prompt": "She thinks about the last letter she got.",
+    "should_trigger": false,
+    "note": "reflection, not arrival"
+  }
+]

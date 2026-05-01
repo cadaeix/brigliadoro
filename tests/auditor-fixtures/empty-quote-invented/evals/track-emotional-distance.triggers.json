@@ -1,0 +1,4 @@
+[
+  { "prompt": "The silence between letters has weight now.", "should_trigger": true, "note": "emotional distance growing" },
+  { "prompt": "She reads the letter.", "should_trigger": false, "note": "unrelated" }
+]

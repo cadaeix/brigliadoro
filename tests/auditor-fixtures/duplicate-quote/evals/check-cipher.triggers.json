@@ -1,0 +1,4 @@
+[
+  { "prompt": "Did the cipher break?", "should_trigger": true, "note": "post-roll cipher inspection" },
+  { "prompt": "She reads her own letter again.", "should_trigger": false, "note": "unrelated" }
+]

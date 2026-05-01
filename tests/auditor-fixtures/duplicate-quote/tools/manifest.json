@@ -1,0 +1,40 @@
+{
+  "game_name": "The Cipher (duplicate-quote variant)",
+  "version": 1,
+  "tools": [
+    {
+      "name": "send_message",
+      "file": "send-message.ts",
+      "description": "Roll when a correspondent commits a letter to the post.",
+      "params": {
+        "sender_name": "Name of the correspondent."
+      },
+      "outcome_tiers": ["clear", "garbled", "lost"],
+      "flags": ["cipher_broken"],
+      "shape": "one-shot",
+      "resources_emitted": [],
+      "resources_consumed": [],
+      "source_ref": {
+        "summary": "The send-the-letter resolution roll.",
+        "quote": "Each turn, one player writes their letter and rolls 2d6. Read the high die. - **6: Clear** — the letter arrives. The recipient reads it as written. - **4 or 5: Garbled** — the letter arrives, but parts are missing, smudged, or transposed. The reader picks one phrase and treats it as illegible. - **2 or 3: Lost** — the letter never arrives. The recipient writes back into the silence. If both dice match (two ones, two fives, two sixes, any pair), **the cipher is broken**.",
+        "page_or_section": "Sending"
+      }
+    },
+    {
+      "name": "check_cipher",
+      "file": "check-cipher.ts",
+      "description": "Check whether the cipher was broken on the latest roll. Reads the most recent send_message result and returns whether matching dice came up.",
+      "params": {},
+      "outcome_tiers": ["intact", "broken"],
+      "flags": [],
+      "shape": "one-shot",
+      "resources_emitted": [],
+      "resources_consumed": [],
+      "source_ref": {
+        "summary": "Cipher-broken check — separate from sending, evaluates whether the dice matched.",
+        "quote": "Each turn, one player writes their letter and rolls 2d6. Read the high die. - **6: Clear** — the letter arrives. The recipient reads it as written. - **4 or 5: Garbled** — the letter arrives, but parts are missing, smudged, or transposed. The reader picks one phrase and treats it as illegible. - **2 or 3: Lost** — the letter never arrives. The recipient writes back into the silence. If both dice match (two ones, two fives, two sixes, any pair), **the cipher is broken**.",
+        "page_or_section": "Sending"
+      }
+    }
+  ]
+}
