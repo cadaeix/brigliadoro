@@ -82,7 +82,13 @@ Return a single JSON object validating against AuditorReportSchema. JSON only â€
     prompt,
     options: {
       systemPrompt: COHERENCE_AUDITOR_PROMPT,
-      allowedTools: ["Read", "Glob", "Grep"],
+      // `tools` (not `allowedTools`) is the actual availability restriction.
+      // `allowedTools` only controls auto-approval among the available set;
+      // with `bypassPermissions` everything available auto-runs anyway, so
+      // `allowedTools` does nothing useful here. Using `tools` instead means
+      // Write / Edit / Bash etc. are not even in the agent's tool palette â€”
+      // structural read-only enforcement, not prose-discipline.
+      tools: ["Read", "Glob", "Grep"],
       permissionMode: "bypassPermissions",
       model,
     },

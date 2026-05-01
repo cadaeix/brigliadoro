@@ -198,7 +198,13 @@ Follow your orchestration protocol: read the sourcebook, analyze it, then delega
     prompt,
     options: {
       systemPrompt: ORCHESTRATOR_PROMPT,
-      allowedTools: [
+      // `tools` (not `allowedTools`) is the actual availability restriction
+      // per the SDK's Options type. `allowedTools` is auto-approval among
+      // available tools; with `bypassPermissions` it does nothing useful.
+      // Using `tools` here structurally enforces the orchestrator's read-only
+      // contract — without this, Write/Edit/Bash were silently available and
+      // only kept off by the orchestrator prompt's prose discipline.
+      tools: [
         "Read",
         "Glob",
         "Grep",
