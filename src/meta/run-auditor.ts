@@ -1,39 +1,38 @@
 /**
- * Standalone harness for running the coherence-auditor against an existing
+ * Standalone CLI for running the coherence-auditor against an existing
  * runner directory. Useful for:
  *
  *   - Validating the auditor against a runner without a full regen (faster
  *     iteration cycle when tuning the prompt or schema).
  *
  *   - Running synthetic break tests: edit a manifest's source_ref.quote to
- *     be a fiction passage, run this harness, confirm the auditor flags
+ *     be a fiction passage, run this CLI, confirm the auditor flags
  *     `quote_kind: fiction`. Same for tier mismatches in config.json.
  *
  *   - Re-auditing a runner whose regen pre-dates the auditor (the manifest
  *     and prompt were verified inline by the orchestrator at regen time;
- *     this harness produces a structured report after the fact).
+ *     this CLI produces a structured report after the fact).
  *
  * Invocation:
  *
- *   npx tsx src/meta/run-auditor.ts <runner-dir> <source-path> [--model haiku|sonnet]
+ *   npx tsx src/meta/run-auditor.ts <runner-dir> <source-path> [--model haiku|sonnet|opus]
  *
  * Example:
  *
  *   npx tsx src/meta/run-auditor.ts runners/goodfellows user-references/goodfellows.md
  *
- * The harness prints the full structured report to stdout and exits with
- * code 0 (ok or warnings_only) or 1 (has_blockers / parse error / agent
- * failure). Useful in CI later if we want regression-test-style auditor
- * runs on canonical runners.
+ * The CLI prints the full structured report to stdout and exits with code
+ * 0 (ok or warnings_only) or 1 (has_blockers / parse error / agent
+ * failure).
+ *
+ * The auditor invocation logic itself lives in `auditor-runner.ts` so the
+ * vitest unit-test suite can call it directly without shelling out.
  */
 
-import { query } from "@anthropic-ai/claude-agent-sdk";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { COHERENCE_AUDITOR_PROMPT } from "./prompts/coherence-auditor.js";
-import { parseAuditorReport, computeOverallSeverity } from "./auditor.js";
-
-type AgentModel = "sonnet" | "opus" | "haiku";
+import { runAuditor, type AgentModel } from "./auditor-runner.js";
+import { computeOverallSeverity } from "./auditor.js";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -78,75 +77,22 @@ async function main() {
     process.exit(1);
   }
 
-  const runnerName = path.basename(runnerDir);
-
   console.log(`\n🔎 Coherence auditor (standalone)`);
   console.log(`   Runner: ${runnerDir}`);
   console.log(`   Source: ${sourcePath}`);
   console.log(`   Model:  ${model}\n`);
 
-  const prompt = `Audit the runner at "${runnerDir}" against the source at "${sourcePath}".
+  const result = await runAuditor({ runnerDir, sourcePath, model });
 
-Runner name: "${runnerName}"
-
-Read the manifest, the source, config.json, server.ts, and the tool / eval directories. Verify all three categories described in your system prompt: source-grounding, manifest consistency, and facilitator coherence.
-
-Return a single JSON object validating against AuditorReportSchema. JSON only — no preamble, no markdown fences.`;
-
-  let streamedText = "";
-  let finalResult = "";
-  for await (const message of query({
-    prompt,
-    options: {
-      systemPrompt: COHERENCE_AUDITOR_PROMPT,
-      allowedTools: ["Read", "Glob", "Grep"],
-      permissionMode: "bypassPermissions",
-      model,
-    },
-  })) {
-    if ("type" in message) {
-      if (message.type === "assistant" && "content" in message) {
-        for (const block of message.content as Array<{
-          type: string;
-          text?: string;
-        }>) {
-          if (block.type === "text" && block.text) {
-            streamedText += block.text;
-          }
-        }
-      } else if (message.type === "result") {
-        const r = message as { result?: string; subtype?: string };
-        finalResult = r.result ?? "";
-      }
+  if (!result.ok) {
+    console.error(`\n❌ Auditor invocation failed:\n${result.error}\n`);
+    if (result.raw) {
+      console.error(`Raw response:\n${result.raw}\n`);
     }
-  }
-
-  // Prefer streamed assistant text; fall back to the result message's
-  // synthesized final answer. SDK behaviour can put the whole response in
-  // either place depending on how the model ended its turn (tool calls
-  // followed by a final text block vs. tool calls then a synthesized
-  // result-message answer).
-  const lastResponse = streamedText.trim() || finalResult.trim();
-
-  // The auditor returns JSON. Extract it; tolerate accidental fences or preamble.
-  const json = extractJsonObject(lastResponse);
-  if (!json) {
-    console.error("\n❌ Auditor did not return a JSON object.\n");
-    console.error(`Streamed assistant text (${streamedText.length} chars):`);
-    console.error(streamedText || "<empty>");
-    console.error(`\nFinal result message (${finalResult.length} chars):`);
-    console.error(finalResult || "<empty>");
     process.exit(1);
   }
 
-  const parsed = parseAuditorReport(json);
-  if (!parsed.ok) {
-    console.error(`\n❌ Auditor report failed schema validation:\n${parsed.error}\n`);
-    console.error(`Raw JSON:\n${json}`);
-    process.exit(1);
-  }
-
-  const report = parsed.report;
+  const report = result.report;
 
   // Sanity: confirm the auditor's self-classification matches the constituent severities.
   const computed = computeOverallSeverity(report);
@@ -171,45 +117,6 @@ Return a single JSON object validating against AuditorReportSchema. JSON only �
   process.exit(effectiveSeverity === "has_blockers" ? 1 : 0);
 }
 
-/**
- * Extract a top-level JSON object from a possibly-noisy string. Tolerates
- * accidental ```json fences, leading prose, or trailing commentary. Returns
- * the first balanced { ... } block, or null if none found.
- */
-function extractJsonObject(text: string): string | null {
-  const stripped = text.replace(/```(?:json)?\s*([\s\S]*?)```/g, "$1");
-  const start = stripped.indexOf("{");
-  if (start === -1) return null;
-
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-  for (let i = start; i < stripped.length; i++) {
-    const ch = stripped[i];
-    if (escape) {
-      escape = false;
-      continue;
-    }
-    if (ch === "\\") {
-      escape = true;
-      continue;
-    }
-    if (ch === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (inString) continue;
-    if (ch === "{") depth++;
-    else if (ch === "}") {
-      depth--;
-      if (depth === 0) {
-        return stripped.slice(start, i + 1);
-      }
-    }
-  }
-  return null;
-}
-
 function severityRank(s: "ok" | "warnings_only" | "has_blockers"): number {
   if (s === "ok") return 0;
   if (s === "warnings_only") return 1;
@@ -217,6 +124,6 @@ function severityRank(s: "ok" | "warnings_only" | "has_blockers"): number {
 }
 
 main().catch((err) => {
-  console.error("Auditor harness failed:", err);
+  console.error("Auditor CLI failed:", err);
   process.exit(1);
 });

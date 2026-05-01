@@ -9,6 +9,8 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:auditor": "vitest run -c vitest.auditor.config.ts",
+    "test:auditor:watch": "vitest -c vitest.auditor.config.ts",
     "generate": "tsx src/meta/run.ts",
     "trigger-eval": "tsx src/meta/trigger-eval.ts"
   },
