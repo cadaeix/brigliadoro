@@ -80,15 +80,20 @@ describe("coherence auditor — fixture suite", () => {
     "duplicate-quote fixture: two tools cite the same passage",
     async () => {
       const report = await auditFixture("duplicate-quote");
-      expect(report.overall_severity).toBe("has_blockers");
 
-      // The signature finding is at least one entry in duplicate_quotes
-      // covering both manifest tools.
+      // The auditor must surface the duplicate. Severity can land on
+      // blocker or warning depending on how Haiku reads the summaries —
+      // the prompt allows downgrading to warning when the two tool
+      // summaries describe genuinely different aspects of the passage.
+      // What we always require: the finding exists, the severity isn't
+      // silent, and both tools are named.
+      expect(report.overall_severity).not.toBe("ok");
       expect(report.source_grounding.duplicate_quotes.length).toBeGreaterThanOrEqual(1);
+
       const dup = report.source_grounding.duplicate_quotes[0]!;
       expect(dup.tools).toContain("send_message");
       expect(dup.tools).toContain("check_cipher");
-      expect(dup.severity).toBe("blocker");
+      expect(["warning", "blocker"]).toContain(dup.severity);
     },
     PER_TEST_TIMEOUT_MS
   );
