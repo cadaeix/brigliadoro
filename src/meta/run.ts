@@ -198,17 +198,24 @@ Follow your orchestration protocol: read the sourcebook, analyze it, then delega
     prompt,
     options: {
       systemPrompt: ORCHESTRATOR_PROMPT,
-      // `tools` (not `allowedTools`) is the actual availability restriction
-      // per the SDK's Options type. `allowedTools` is auto-approval among
-      // available tools; with `bypassPermissions` it does nothing useful.
-      // Using `tools` here structurally enforces the orchestrator's read-only
-      // contract — without this, Write/Edit/Bash were silently available and
-      // only kept off by the orchestrator prompt's prose discipline.
-      tools: [
-        "Read",
-        "Glob",
-        "Grep",
-      ],
+      // The `tools` field is the *base set* available to this query AND
+      // to all subagents spawned via Task. Subagents listed in `agents:`
+      // below declare their own tool subsets, but those subsets are
+      // intersected with this base set — so if Write isn't here, the
+      // tool-builder can't write files even if its own `tools: [...]`
+      // includes Write.
+      //
+      // The orchestrator's read-only contract is enforced by its system
+      // prompt discipline (ORCHESTRATOR_PROMPT explicitly says "you do not
+      // write files yourself — your access is read-only"), not by tool
+      // restriction. We don't lock down `tools` here because doing so
+      // breaks subagent delegation — see commit history for the failed
+      // bypassPermissions tightening that revealed this.
+      //
+      // The auditor harness (auditor-runner.ts) DOES lock down via
+      // `tools: ["Read", "Glob", "Grep"]` because it spawns no subagents
+      // and is genuinely read-only. Different shape, different rule.
+      tools: { type: "preset" as const, preset: "claude_code" as const },
       permissionMode: "bypassPermissions",
       model: models.orchestrator,
       agents: {
