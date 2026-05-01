@@ -19,6 +19,12 @@ import type { TranscriptWriter } from "./lib/runner/transcript.js";
 import { runBookkeeper } from "./lib/runner/bookkeeper.js";
 import type { BookSnapshot } from "./lib/runner/bookkeeper.js";
 import { createSubagentTrace } from "./lib/runner/subagent-trace.js";
+// Director/Narrator split-agent runtime (Phase 1, opt-in via --split-agents).
+// See ~/.claude/plans/brigliadoro-director-narrator-split.md.
+import { runDirector } from "./lib/runner/director.js";
+import { runNarrator } from "./lib/runner/narrator.js";
+import { DIRECTOR_PROMPT } from "./lib/runner/prompts/director.js";
+import { NARRATOR_PROMPT } from "./lib/runner/prompts/narrator.js";
 import {
   installSeededRng,
   installSequenceRng,
@@ -417,6 +423,15 @@ async function main() {
     process.exit(1);
   }
 
+  // Phase-1 split-agent flag — opt-in alternative runtime where the
+  // monolithic facilitator is replaced by a Director (planning + tools)
+  // and a Narrator (voice + prose), with a typed brief between them.
+  // Plan: ~/.claude/plans/brigliadoro-director-narrator-split.md.
+  // Phase 1: regular turns + /quit + opening message. Session-mode commands
+  // (/new, /new-session, /resume) and persistent session IDs are deferred
+  // to later phases of the plan.
+  const splitAgents = argvRaw.includes("--split-agents");
+
   // Parse --player-preferences=FILE — a markdown file with pre-baked answers
   // to the universal session-zero questions (tone, content to avoid, story
   // shape, etc). When present, the facilitator is told to treat these as
@@ -627,6 +642,165 @@ async function main() {
 
   const resumePrompt = `The player has returned to the game after closing the terminal. Follow your sitting-management protocol: read your scratchpad and \`list\` your npcs/factions/character_sheets books to reorient, then recap briefly (a sentence or two on where we left off) and ask what they want to do next. Don't dump the full memory state — just orient.`;
   const freshSessionPrompt = `The player has started a fresh session. Read your scratchpad and \`list\` your npcs/factions/character_sheets books to see what world state already exists. If there are existing PC(s), NPCs, or factions, greet the player warmly, briefly describe what you remember, and ask whether they're continuing with an existing PC, introducing a new PC in this world, or starting something else. If the books are empty, this is a true first session — run the session zero greeting flow.`;
+
+  // ── Phase-1 split-agent runtime ────────────────────────────────────────
+  // When --split-agents is set, replace the monolithic facilitator with a
+  // Director (planning + tool calls + brief) and a Narrator (voice + prose
+  // from the brief). Two parallel sessions, two parallel sessionIds.
+  //
+  // Phase 1 simplifications:
+  //   - No persistent sessionIds across runs (always starts fresh; no /resume)
+  //   - /new, /new-session unsupported (use a fresh `npm run play` invocation)
+  //   - Opening message + first-response capture is shared with monolith logic
+  //
+  // Plan: ~/.claude/plans/brigliadoro-director-narrator-split.md. Cutover to
+  // default + full session-mode parity is Phase 4 of that plan.
+  if (splitAgents) {
+    console.log(
+      "[--split-agents: Phase-1 runtime — Director + Narrator split. /resume, /new, /new-session not supported in this mode yet.]\n"
+    );
+
+    let directorSessionId: string | undefined;
+    let narratorSessionId: string | undefined;
+
+    async function runSplitTurn(
+      playerInputForBrief: string,
+      directorPromptText: string
+    ): Promise<{ prose: string }> {
+      const directorResult = await runDirector({
+        prompt: directorPromptText,
+        systemPrompt:
+          DIRECTOR_PROMPT +
+          `\n\n## Game-specific facilitator context\n\n` +
+          `The system prompt below was authored for this specific game. It carries voice cues, principles, and tool-usage guidance you should treat as authoritative for game-specific framing. You — the Director — focus on the planning + brief side; the voice cues are most useful when populating brief.voice_hints and beat.intent.\n\n` +
+          systemPrompt,
+        gameServer,
+        facilitatorServer,
+        resumeSessionId: directorSessionId,
+        model: "sonnet",
+        transcript,
+      });
+
+      if (!directorResult.ok) {
+        // Director didn't return a parseable brief. Phase-1 fallback: log
+        // diagnostic, surface a degraded prose turn so the player sees
+        // something rather than a silent hang.
+        console.error(
+          `\n[Director failed: ${directorResult.error}]\n` +
+            `[Raw text was: ${directorResult.rawText.slice(0, 400)}…]\n`
+        );
+        if (directorResult.sessionId) directorSessionId = directorResult.sessionId;
+        const degraded =
+          "(The Director returned a malformed brief. " +
+          "This is a Phase-1 split-agents bug worth reporting; for now, " +
+          "try rephrasing or use a fresh terminal without --split-agents.)";
+        console.log("\n" + degraded + "\n");
+        transcript.recordFacilitatorChunk(degraded + "\n");
+        transcript.endFacilitatorTurn(directorResult.sessionId ?? "");
+        return { prose: degraded };
+      }
+
+      directorSessionId = directorResult.sessionId;
+
+      const narratorResult = await runNarrator({
+        brief: {
+          ...directorResult.brief,
+          // Always carry the player's verbatim input even if the Director
+          // forgot to populate it.
+          player_input:
+            directorResult.brief.player_input || playerInputForBrief,
+        },
+        systemPrompt: NARRATOR_PROMPT,
+        resumeSessionId: narratorSessionId,
+        model: "sonnet",
+        transcript,
+      });
+
+      narratorSessionId = narratorResult.sessionId;
+
+      return { prose: narratorResult.prose };
+    }
+
+    // Opening message + first-response capture (mirrors the monolith path)
+    let firstResponse: string | undefined;
+    if (openingMessage) {
+      console.log(`\n${openingMessage}\n`);
+      transcript.recordFacilitatorChunk(openingMessage + "\n");
+      const userInput = await promptPlayer(playerSource, "\n> ");
+      const trimmed = userInput.trim();
+      if (trimmed.toLowerCase() === "/quit") {
+        await playerSource.close();
+        console.log("\n[Thanks for playing!]");
+        return;
+      }
+      firstResponse = trimmed;
+      transcript.recordPlayerInput(trimmed);
+    }
+
+    transcript.beginSession({
+      gameName: config.name,
+      mode: "initial",
+      seedLabel: seedModeLabel,
+    });
+
+    // First turn — frame as session-zero / initial greeting.
+    turnNumber += 1;
+    const firstPrompt = buildInitialPrompt({
+      openingShownToPlayer: Boolean(openingMessage),
+      playerFirstResponse: firstResponse,
+    });
+    const firstSplit = await runSplitTurn(
+      firstResponse ?? "(no input — opening turn)",
+      firstPrompt
+    );
+    enqueueBookkeeper({
+      turnText:
+        firstResponse !== undefined
+          ? `> ${firstResponse}\n\n${firstSplit.prose}`
+          : firstSplit.prose,
+      turn: turnNumber,
+      // Pass Director sessionId for trace correlation (Narrator's is
+      // separate but the bookkeeper only needs one anchor).
+      sessionId: directorSessionId ?? "",
+    });
+
+    // Turn loop — split-agent variant.
+    while (true) {
+      const input = await promptPlayer(playerSource, "\n> ");
+      const trimmed = input.trim();
+      const lower = trimmed.toLowerCase();
+
+      if (lower === "/quit") {
+        await awaitPendingBookkeeper();
+        console.log("\n[Thanks for playing!]");
+        break;
+      }
+      if (lower === "/new" || lower === "/new-session") {
+        console.log(
+          `[${lower} not supported in Phase-1 split-agents mode. Use /quit and restart.]\n`
+        );
+        continue;
+      }
+      if (trimmed === "") continue;
+
+      console.log("");
+      await awaitPendingBookkeeper();
+      transcript.recordPlayerInput(input);
+      turnNumber += 1;
+
+      const split = await runSplitTurn(input, input);
+      enqueueBookkeeper({
+        turnText: `> ${input}\n\n${split.prose}`,
+        turn: turnNumber,
+        sessionId: directorSessionId ?? "",
+      });
+    }
+
+    await playerSource.close();
+    return;
+  }
+
+  // ── Monolith path (default) ────────────────────────────────────────────
 
   // Decide the first-turn mode.
   const savedId = readSavedSessionId(stateDir);
