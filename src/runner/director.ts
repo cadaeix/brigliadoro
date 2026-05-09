@@ -30,6 +30,11 @@ import {
   type NarratorBrief,
 } from "./narrator-brief.js";
 import type { TranscriptWriter } from "./transcript.js";
+import {
+  extractJsonObject,
+  streamSdkQuery,
+  summariseToolInput,
+} from "./sdk-utils.js";
 
 export type AgentModel = "sonnet" | "opus" | "haiku";
 
@@ -98,11 +103,6 @@ export async function runDirector(
     transcript,
   } = opts;
 
-  let streamedText = "";
-  let finalResult = "";
-  let sessionId = "";
-  const toolUseNames = new Map<string, string>();
-
   const queryOptions = {
     systemPrompt,
     mcpServers: {
@@ -119,62 +119,36 @@ export async function runDirector(
     ...(resumeSessionId ? { resume: resumeSessionId } : {}),
   };
 
-  for await (const message of query({
-    prompt,
-    options: queryOptions,
-  })) {
-    if (!("type" in message)) continue;
-
-    if (message.type === "assistant" && "message" in message) {
-      const msg = message.message as { content: Array<Record<string, unknown>> };
-      for (const block of msg.content) {
-        if (block.type === "text" && typeof block.text === "string") {
-          // Director text is the JSON brief — internal, not for stdout.
-          streamedText += block.text;
-        } else if (block.type === "tool_use") {
-          const name = stripMcpPrefix(
-            typeof block.name === "string" ? block.name : ""
-          );
-          const hint = summariseToolInput(block.input);
-          const id = typeof block.id === "string" ? block.id : "";
-          if (id) toolUseNames.set(id, name);
-          // Log tool call to transcript (and to console as a dim line so
-          // the operator can see mechanics firing during play).
-          process.stdout.write(`\n\x1b[2m  [director] ↪ ${name}${hint}\x1b[0m\n`);
-          transcript.recordToolCall(`director:${name}`, hint);
+  const summary = await streamSdkQuery(
+    query({ prompt, options: queryOptions }),
+    {
+      // Director text is the JSON brief — internal, not for stdout.
+      // `streamSdkQuery` accumulates it into summary.text regardless.
+      onToolUse({ name, input }) {
+        const hint = summariseToolInput(input);
+        // Log tool call to transcript and to console as a dim line so the
+        // operator can see mechanics firing during play.
+        process.stdout.write(
+          `\n\x1b[2m  [director] ↪ ${name}${hint}\x1b[0m\n`
+        );
+        transcript.recordToolCall(`director:${name}`, hint);
+      },
+      onToolResult({ name, text }) {
+        transcript.recordToolResult(`director:${name}`, text);
+      },
+      onResult({ subtype }) {
+        if (subtype !== "success") {
+          console.error(`\n[Director ended with: ${subtype}]`);
         }
-      }
-    } else if (message.type === "user" && "message" in message) {
-      // Tool results arrive as tool_result blocks in user-role messages.
-      const msg = message.message as { content: Array<Record<string, unknown>> };
-      if (!Array.isArray(msg.content)) continue;
-      for (const block of msg.content) {
-        if (block.type === "tool_result") {
-          const id =
-            typeof block.tool_use_id === "string" ? block.tool_use_id : "";
-          const name = toolUseNames.get(id) ?? "unknown_tool";
-          const resultText = extractToolResultText(block);
-          transcript.recordToolResult(`director:${name}`, resultText);
-        }
-      }
-    } else if (message.type === "result") {
-      const result = message as {
-        session_id?: string;
-        subtype?: string;
-        result?: string;
-      };
-      sessionId = result.session_id ?? "";
-      finalResult = result.result ?? "";
-      if (result.subtype !== "success") {
-        console.error(`\n[Director ended with: ${result.subtype}]`);
-      }
+      },
     }
-  }
+  );
 
+  const sessionId = summary.sessionId;
   // Prefer streamed assistant text; fall back to result-message synthesis.
   // Same dual-channel handling as the auditor harness — SDK can put the
   // final response in either place depending on how the model ended.
-  const raw = streamedText.trim() || finalResult.trim();
+  const raw = summary.text.trim() || summary.rawResult.trim();
 
   const json = extractJsonObject(raw);
   if (!json) {
@@ -182,8 +156,8 @@ export async function runDirector(
       ok: false,
       error:
         "Director did not return a JSON object. " +
-        `Streamed text: ${streamedText.length} chars; ` +
-        `final result: ${finalResult.length} chars.`,
+        `Streamed text: ${summary.text.length} chars; ` +
+        `final result: ${summary.rawResult.length} chars.`,
       rawText: raw,
       sessionId,
     };
@@ -205,83 +179,4 @@ export async function runDirector(
     sessionId,
     rawJson: json,
   };
-}
-
-/**
- * Extract the first balanced JSON object from a possibly-noisy string.
- * Tolerates accidental ```json fences, leading prose, or trailing commentary.
- * Same implementation as the auditor harness — duplicated rather than
- * shared because the dependency would point runtime code at meta-side
- * code, which we keep separate.
- */
-function extractJsonObject(text: string): string | null {
-  const stripped = text.replace(/```(?:json)?\s*([\s\S]*?)```/g, "$1");
-  const start = stripped.indexOf("{");
-  if (start === -1) return null;
-
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-  for (let i = start; i < stripped.length; i++) {
-    const ch = stripped[i];
-    if (escape) {
-      escape = false;
-      continue;
-    }
-    if (ch === "\\") {
-      escape = true;
-      continue;
-    }
-    if (ch === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (inString) continue;
-    if (ch === "{") depth++;
-    else if (ch === "}") {
-      depth--;
-      if (depth === 0) {
-        return stripped.slice(start, i + 1);
-      }
-    }
-  }
-  return null;
-}
-
-function stripMcpPrefix(name: string): string {
-  // Tool names from MCP servers come prefixed (e.g. mcp__facilitator__npcs).
-  // Strip for compactness in transcript / console.
-  const m = name.match(/^mcp__[^_]+__(.+)$/);
-  return m ? m[1]! : name;
-}
-
-function summariseToolInput(input: unknown): string {
-  if (!input || typeof input !== "object") return "";
-  const keys = Object.keys(input as Record<string, unknown>);
-  if (keys.length === 0) return "";
-  // First non-trivial value, truncated.
-  const first = keys[0]!;
-  const v = (input as Record<string, unknown>)[first];
-  const s = typeof v === "string" ? v : JSON.stringify(v);
-  const truncated = s.length > 30 ? s.slice(0, 30) + "…" : s;
-  return ` ${first}=${JSON.stringify(truncated)}`;
-}
-
-function extractToolResultText(block: Record<string, unknown>): string {
-  const content = block.content;
-  if (Array.isArray(content)) {
-    for (const c of content) {
-      if (
-        c &&
-        typeof c === "object" &&
-        (c as Record<string, unknown>).type === "text" &&
-        typeof (c as Record<string, unknown>).text === "string"
-      ) {
-        return (c as Record<string, unknown>).text as string;
-      }
-    }
-  } else if (typeof content === "string") {
-    return content;
-  }
-  return "";
 }

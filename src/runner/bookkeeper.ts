@@ -11,6 +11,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import type { SubagentTrace, SubagentToolCall } from "./subagent-trace.js";
+import { streamSdkQuery } from "./sdk-utils.js";
 
 export interface BookkeeperGameContext {
   gameName: string;
@@ -171,23 +172,12 @@ export async function runBookkeeper(
       },
     });
 
-    for await (const message of iter) {
-      if (!("type" in message)) continue;
-      if (message.type === "assistant" && "message" in message) {
-        const msg = message.message as { content: Array<Record<string, unknown>> };
-        for (const block of msg.content) {
-          if (block.type === "text" && typeof block.text === "string") {
-            summaryText += block.text;
-          } else if (block.type === "tool_use") {
-            const rawName = typeof block.name === "string" ? block.name : "";
-            toolCalls.push({
-              tool: stripMcpPrefix(rawName),
-              args: block.input,
-            });
-          }
-        }
-      }
-    }
+    const streamResult = await streamSdkQuery(iter, {
+      onToolUse({ name, input }) {
+        toolCalls.push({ tool: name, args: input });
+      },
+    });
+    summaryText = streamResult.text;
   } catch (err) {
     summaryText = `[bookkeeper error] ${(err as Error).message ?? String(err)}`;
   }
@@ -271,12 +261,6 @@ function extractSummary(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return "";
   return trimmed.length > 200 ? trimmed.slice(0, 200) + "…" : trimmed;
-}
-
-function stripMcpPrefix(rawName: string): string {
-  const parts = rawName.split("__");
-  if (parts.length >= 3 && parts[0] === "mcp") return parts.slice(2).join("__");
-  return rawName;
 }
 
 function truncate(s: string, max: number): string {

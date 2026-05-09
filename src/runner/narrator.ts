@@ -19,6 +19,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { NarratorBrief } from "./narrator-brief.js";
 import type { TranscriptWriter } from "./transcript.js";
 import type { AgentModel } from "./director.js";
+import { streamSdkQuery } from "./sdk-utils.js";
 
 export interface NarratorRunOptions {
   /** The brief from the Director. Serialized as JSON for the Narrator. */
@@ -64,9 +65,6 @@ export async function runNarrator(
 
   const userMessage = buildNarratorPrompt(brief);
 
-  let prose = "";
-  let sessionId = "";
-
   const queryOptions = {
     systemPrompt,
     model,
@@ -78,31 +76,25 @@ export async function runNarrator(
     ...(resumeSessionId ? { resume: resumeSessionId } : {}),
   };
 
-  for await (const message of query({
-    prompt: userMessage,
-    options: queryOptions,
-  })) {
-    if (!("type" in message)) continue;
-
-    if (message.type === "assistant" && "message" in message) {
-      const msg = message.message as { content: Array<Record<string, unknown>> };
-      for (const block of msg.content) {
-        if (block.type === "text" && typeof block.text === "string") {
-          process.stdout.write(block.text);
-          transcript.recordFacilitatorChunk(block.text);
-          prose += block.text;
+  // tool_use blocks shouldn't appear (no tools), but if they do
+  // `streamSdkQuery` silently ignores them — no `onToolUse` handler.
+  const summary = await streamSdkQuery(
+    query({ prompt: userMessage, options: queryOptions }),
+    {
+      onText(text) {
+        process.stdout.write(text);
+        transcript.recordFacilitatorChunk(text);
+      },
+      onResult({ subtype }) {
+        if (subtype !== "success") {
+          console.error(`\n[Narrator ended with: ${subtype}]`);
         }
-        // tool_use blocks shouldn't appear (no tools), but if they do
-        // we silently ignore — the Narrator has nothing to call.
-      }
-    } else if (message.type === "result") {
-      const result = message as { session_id?: string; subtype?: string };
-      sessionId = result.session_id ?? "";
-      if (result.subtype !== "success") {
-        console.error(`\n[Narrator ended with: ${result.subtype}]`);
-      }
+      },
     }
-  }
+  );
+
+  const prose = summary.text;
+  const sessionId = summary.sessionId;
 
   // Ensure terminal output ends with newline; flush transcript turn.
   if (!prose.endsWith("\n")) {

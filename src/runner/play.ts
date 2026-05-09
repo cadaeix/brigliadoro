@@ -36,6 +36,10 @@ import {
   createStdinSource,
 } from "./lib/runner/player-input.js";
 import type { PlayerInputSource } from "./lib/runner/player-input.js";
+import {
+  streamSdkQuery,
+  summariseToolInput,
+} from "./lib/runner/sdk-utils.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -51,145 +55,46 @@ function promptPlayer(source: PlayerInputSource, prompt: string): Promise<string
 }
 
 /**
- * Strip the MCP wrapper prefix `mcp__<server>__` from a tool name so
- * callers see e.g. "resolve_action" not "mcp__my-game__resolve_action".
- */
-function stripMcpPrefix(rawName: string): string {
-  const parts = rawName.split("__");
-  if (parts.length >= 3 && parts[0] === "mcp") return parts.slice(2).join("__");
-  return rawName;
-}
-
-/**
- * Build a short hint for a tool-call indicator line. Picks the most
- * identifying field from common tool-arg shapes and truncates. Falls back
- * to `phase` / `action` (pausable tools) and `kind` / `type` (discriminated
- * unions) so indicator lines stay informative for control-flow-heavy tools.
+ * Stream one monolith-facilitator query turn: print assistant text to
+ * stdout, mirror facilitator text + tool-call indicators + tool-result
+ * payloads to the transcript writer, return session_id + accumulated text.
  *
- * When multiple informative fields are present (e.g. a pausable tool call
- * with both `phase: "continue"` and `action: "hit"`), shows both separated
- * by a bullet.
- *
- * Returns "" if nothing short and human-readable can be extracted.
- */
-function summariseToolInput(input: unknown): string {
-  if (!input || typeof input !== "object") return "";
-  const i = input as Record<string, unknown>;
-  const pickStr = (k: string): string | null => {
-    const v = i[k];
-    return typeof v === "string" && v ? v : null;
-  };
-  // "Primary" fields that identify WHAT entity/action the tool is working on.
-  const primary =
-    pickStr("name") ??
-    pickStr("description") ??
-    pickStr("threat") ??
-    pickStr("operation") ??
-    null;
-  // "Control" fields that identify HOW the tool call is operating. Shown
-  // alongside primary when both are present (e.g. memory-book upserts +
-  // name), or on their own for pausable / discriminated-union tools.
-  const control = pickStr("phase") ?? pickStr("action") ?? pickStr("kind") ?? pickStr("type") ?? null;
-
-  const parts: string[] = [];
-  if (primary) parts.push(primary);
-  if (control) parts.push(control);
-  if (parts.length === 0) return "";
-
-  const max = 60;
-  const joined = parts.join(" · ");
-  const truncated = joined.length > max ? joined.slice(0, max) + "…" : joined;
-  return ` ${JSON.stringify(truncated)}`;
-}
-
-/**
- * Stream one query turn, printing assistant text to stdout and mirroring
- * facilitator text + tool-call indicators + tool-result payloads to the
- * transcript writer. Returns the session_id from the result message.
- *
- * Tool results arrive in user-role messages keyed by tool_use_id. We maintain
- * a small id → name map across the turn so result lines can be labelled with
- * the tool they came back from (e.g. "roll_action → {outcome_tier: ...}").
+ * Tool results arrive in user-role messages keyed by tool_use_id;
+ * `streamSdkQuery` resolves them to tool names internally so this function
+ * sees a clean event stream.
  */
 async function streamTurn(
   queryIter: AsyncIterable<Record<string, unknown>>,
   transcript: TranscriptWriter
 ): Promise<{ sessionId: string; facilitatorText: string }> {
-  let sessionId = "";
-  let facilitatorText = "";
-  const toolUseNames = new Map<string, string>();
-
-  for await (const message of queryIter) {
-    if (!("type" in message)) continue;
-
-    if (message.type === "assistant" && "message" in message) {
-      const msg = message.message as { content: Array<Record<string, unknown>> };
-      for (const block of msg.content) {
-        if (block.type === "text" && typeof block.text === "string") {
-          process.stdout.write(block.text);
-          transcript.recordFacilitatorChunk(block.text);
-          facilitatorText += block.text;
-        } else if (block.type === "tool_use") {
-          // Dim line showing the tool call so the player (and you,
-          // debugging) can see the memory books and game tools firing
-          // under the narration.
-          const name = stripMcpPrefix(typeof block.name === "string" ? block.name : "");
-          const hint = summariseToolInput(block.input);
-          const id = typeof block.id === "string" ? block.id : "";
-          if (id) toolUseNames.set(id, name);
-          process.stdout.write(`\n\x1b[2m  ↪ ${name}${hint}\x1b[0m\n`);
-          transcript.recordToolCall(name, hint);
-        }
-      }
-    } else if (message.type === "user" && "message" in message) {
-      // Tool results arrive in user-role messages as tool_result blocks.
+  const summary = await streamSdkQuery(queryIter, {
+    onText(text) {
+      process.stdout.write(text);
+      transcript.recordFacilitatorChunk(text);
+    },
+    onToolUse({ name, input }) {
+      // Dim line showing the tool call so the player (and you,
+      // debugging) can see the memory books and game tools firing
+      // under the narration.
+      const hint = summariseToolInput(input);
+      process.stdout.write(`\n\x1b[2m  ↪ ${name}${hint}\x1b[0m\n`);
+      transcript.recordToolCall(name, hint);
+    },
+    onToolResult({ name, text }) {
       // Don't print to stdout (would spam the game view); mirror to transcript.
-      const msg = message.message as { content: Array<Record<string, unknown>> };
-      if (!Array.isArray(msg.content)) continue;
-      for (const block of msg.content) {
-        if (block.type === "tool_result") {
-          const id = typeof block.tool_use_id === "string" ? block.tool_use_id : "";
-          const name = toolUseNames.get(id) ?? "unknown_tool";
-          const resultText = extractToolResultText(block);
-          transcript.recordToolResult(name, resultText);
-        }
+      transcript.recordToolResult(name, text);
+    },
+    onResult({ subtype }) {
+      if (subtype !== "success") {
+        console.error(`\n[Facilitator agent ended with: ${subtype}]`);
       }
-    } else if (message.type === "result") {
-      const result = message as { session_id?: string; subtype?: string };
-      sessionId = result.session_id ?? "";
-      if (result.subtype !== "success") {
-        console.error(`\n[Facilitator agent ended with: ${result.subtype}]`);
-      }
-    }
-  }
+    },
+  });
 
   // Ensure terminal output ends with newline; flush transcript turn too
   process.stdout.write("\n");
-  transcript.endFacilitatorTurn(sessionId);
-  return { sessionId, facilitatorText };
-}
-
-/**
- * Extract the text payload from a tool_result block. MCP tool_results can
- * carry their content as an array of content blocks (typical) or a raw string.
- */
-function extractToolResultText(block: Record<string, unknown>): string {
-  const content = block.content;
-  if (Array.isArray(content)) {
-    for (const c of content) {
-      if (
-        c &&
-        typeof c === "object" &&
-        (c as Record<string, unknown>).type === "text" &&
-        typeof (c as Record<string, unknown>).text === "string"
-      ) {
-        return (c as Record<string, unknown>).text as string;
-      }
-    }
-  } else if (typeof content === "string") {
-    return content;
-  }
-  return "";
+  transcript.endFacilitatorTurn(summary.sessionId);
+  return { sessionId: summary.sessionId, facilitatorText: summary.text };
 }
 
 // ── Bookkeeper helpers ─────────────────────────────────────────────────
