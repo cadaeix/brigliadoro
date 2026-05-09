@@ -1,0 +1,138 @@
+/**
+ * Phase-1 Director/Narrator split runtime.
+ *
+ * Each turn: the Director plans + calls tools + emits a typed
+ * `NarratorBrief`, then the Narrator writes prose from the brief. Both
+ * run as separate `query()` sessions with their own ephemeral
+ * sessionIds threaded across turns within a single sitting only.
+ *
+ * Cross-run persistence is deferred to Phase 4 of the
+ * brigliadoro-director-narrator-split plan; this runner advertises
+ * `supportsSessionCommands: false` so play.ts blocks /new /
+ * /new-session at the input layer.
+ *
+ * Structurally absorbs the `runSplitTurn` closure that previously lived
+ * inside `main()` in play.ts. The Director's system prompt is
+ * pre-composed (DIRECTOR_PROMPT + game-specific framing + the game's
+ * facilitator system prompt) at construction time so the per-turn path
+ * is just two SDK calls + brief threading.
+ */
+import { type createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  TurnInput,
+  TurnOutput,
+  TurnRunner,
+} from "./turn-runner.js";
+import type { TranscriptWriter } from "./transcript.js";
+import { runDirector } from "./director.js";
+import { runNarrator } from "./narrator.js";
+import { DIRECTOR_PROMPT } from "./prompts/director.js";
+import { NARRATOR_PROMPT } from "./prompts/narrator.js";
+
+type SdkMcpServerInstance = ReturnType<typeof createSdkMcpServer>;
+
+export interface SplitTurnRunnerOptions {
+  /** The game-specific facilitator system prompt — appended to
+   *  DIRECTOR_PROMPT with framing about who's in charge of voice vs
+   *  planning. The Narrator uses NARRATOR_PROMPT alone (voice cues are
+   *  carried per-turn in the brief, not in a persistent system prompt). */
+  gameSystemPrompt: string;
+  gameServer: SdkMcpServerInstance;
+  facilitatorServer: SdkMcpServerInstance;
+  transcript: TranscriptWriter;
+}
+
+export function createSplitTurnRunner(
+  opts: SplitTurnRunnerOptions
+): TurnRunner {
+  const { gameSystemPrompt, gameServer, facilitatorServer, transcript } = opts;
+
+  // Pre-compose the Director's system prompt once at construction. The
+  // game-specific facilitator prompt carries voice cues, principles, and
+  // tool-usage guidance — the Director treats those as authoritative for
+  // brief.voice_hints / beat.intent population, not for prose voice
+  // (that's the Narrator's surface).
+  const directorSystemPrompt =
+    DIRECTOR_PROMPT +
+    `\n\n## Game-specific facilitator context\n\n` +
+    `The system prompt below was authored for this specific game. It carries voice cues, principles, and tool-usage guidance you should treat as authoritative for game-specific framing. You — the Director — focus on the planning + brief side; the voice cues are most useful when populating brief.voice_hints and beat.intent.\n\n` +
+    gameSystemPrompt;
+
+  let directorSessionId: string | undefined;
+  let narratorSessionId: string | undefined;
+
+  return {
+    supportsSessionCommands: false,
+
+    resetSession(): void {
+      directorSessionId = undefined;
+      narratorSessionId = undefined;
+    },
+
+    async runTurn({ userPrompt, playerInput }: TurnInput): Promise<TurnOutput> {
+      const directorResult = await runDirector({
+        prompt: userPrompt,
+        systemPrompt: directorSystemPrompt,
+        gameServer,
+        facilitatorServer,
+        resumeSessionId: directorSessionId,
+        model: "sonnet",
+        transcript,
+      });
+
+      if (!directorResult.ok) {
+        // Director returned a malformed brief. Phase-1 fallback: log
+        // diagnostic, surface a degraded prose turn so the player sees
+        // something rather than a silent hang.
+        console.error(
+          `\n[Director failed: ${directorResult.error}]\n` +
+            `[Raw text was: ${directorResult.rawText.slice(0, 400)}…]\n`
+        );
+        if (directorResult.sessionId) {
+          directorSessionId = directorResult.sessionId;
+        }
+        const degraded =
+          "(The Director returned a malformed brief. " +
+          "This is a Phase-1 split-agents bug worth reporting; for now, " +
+          "try rephrasing or use a fresh terminal without --split-agents.)";
+        console.log("\n" + degraded + "\n");
+        transcript.recordFacilitatorChunk(degraded + "\n");
+        transcript.endFacilitatorTurn(directorResult.sessionId ?? "");
+        return {
+          facilitatorText: degraded,
+          sessionIdForTrace: directorResult.sessionId ?? "",
+        };
+      }
+
+      directorSessionId = directorResult.sessionId;
+
+      const narratorResult = await runNarrator({
+        brief: {
+          ...directorResult.brief,
+          // Always carry the player's verbatim input even if the
+          // Director forgot to populate it. Falls back through
+          // playerInput → userPrompt so first-turn cases (where
+          // userPrompt is framed but playerInput is the raw response)
+          // are covered.
+          player_input:
+            directorResult.brief.player_input ||
+            playerInput ||
+            userPrompt,
+        },
+        systemPrompt: NARRATOR_PROMPT,
+        resumeSessionId: narratorSessionId,
+        model: "sonnet",
+        transcript,
+      });
+
+      narratorSessionId = narratorResult.sessionId;
+
+      return {
+        facilitatorText: narratorResult.prose,
+        // Director's id anchors the bookkeeper trace — Narrator's is
+        // separate but the bookkeeper only needs one anchor.
+        sessionIdForTrace: directorSessionId ?? "",
+      };
+    },
+  };
+}

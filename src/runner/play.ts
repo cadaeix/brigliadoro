@@ -7,7 +7,7 @@
  *
  * Usage: npx tsx play.ts
  */
-import { query, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";
@@ -15,26 +15,15 @@ import { fileURLToPath } from "node:url";
 import { buildFacilitatorSystemPrompt } from "./lib/runner/facilitator-prompt-template.js";
 import { createFacilitatorMemoryTools } from "./lib/runner/facilitator-memory.js";
 import { createTranscriptWriter } from "./lib/runner/transcript.js";
-import type { TranscriptWriter } from "./lib/runner/transcript.js";
 import { runBookkeeper } from "./lib/runner/bookkeeper.js";
 import type { BookSnapshot } from "./lib/runner/bookkeeper.js";
 import { createSubagentTrace } from "./lib/runner/subagent-trace.js";
-// Director/Narrator split-agent runtime (Phase 1, opt-in via --split-agents).
-// See ~/.claude/plans/brigliadoro-director-narrator-split.md.
-import { runDirector } from "./lib/runner/director.js";
-import { runNarrator } from "./lib/runner/narrator.js";
-import { DIRECTOR_PROMPT } from "./lib/runner/prompts/director.js";
-import { NARRATOR_PROMPT } from "./lib/runner/prompts/narrator.js";
 import {
   createScriptSource,
   createScriptTailSource,
   createStdinSource,
 } from "./lib/runner/player-input.js";
 import type { PlayerInputSource } from "./lib/runner/player-input.js";
-import {
-  streamSdkQuery,
-  summariseToolInput,
-} from "./lib/runner/sdk-utils.js";
 import {
   applySeedMode,
   loadPlayerPreferences,
@@ -45,12 +34,17 @@ import {
   clearSessionId,
   confirmPrompt,
   resolveSessionMode,
-  writeSessionId,
 } from "./lib/runner/session-mode.js";
 import {
   buildInitialPrompt,
   presentOpeningMessage,
 } from "./lib/runner/opening-message.js";
+// Per-turn agent invocation lives behind the TurnRunner strategy
+// interface; play.ts holds the input loop + bookkeeper plumbing.
+// Phase-4 cutover deletes the monolith implementation.
+import type { TurnRunner } from "./lib/runner/turn-runner.js";
+import { createMonolithTurnRunner } from "./lib/runner/monolith-turn-runner.js";
+import { createSplitTurnRunner } from "./lib/runner/split-turn-runner.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -59,53 +53,6 @@ function createReadline(): readline.Interface {
     input: process.stdin,
     output: process.stdout,
   });
-}
-
-function promptPlayer(source: PlayerInputSource, prompt: string): Promise<string> {
-  return source.prompt(prompt);
-}
-
-/**
- * Stream one monolith-facilitator query turn: print assistant text to
- * stdout, mirror facilitator text + tool-call indicators + tool-result
- * payloads to the transcript writer, return session_id + accumulated text.
- *
- * Tool results arrive in user-role messages keyed by tool_use_id;
- * `streamSdkQuery` resolves them to tool names internally so this function
- * sees a clean event stream.
- */
-async function streamTurn(
-  queryIter: AsyncIterable<Record<string, unknown>>,
-  transcript: TranscriptWriter
-): Promise<{ sessionId: string; facilitatorText: string }> {
-  const summary = await streamSdkQuery(queryIter, {
-    onText(text) {
-      process.stdout.write(text);
-      transcript.recordFacilitatorChunk(text);
-    },
-    onToolUse({ name, input }) {
-      // Dim line showing the tool call so the player (and you,
-      // debugging) can see the memory books and game tools firing
-      // under the narration.
-      const hint = summariseToolInput(input);
-      process.stdout.write(`\n\x1b[2m  ↪ ${name}${hint}\x1b[0m\n`);
-      transcript.recordToolCall(name, hint);
-    },
-    onToolResult({ name, text }) {
-      // Don't print to stdout (would spam the game view); mirror to transcript.
-      transcript.recordToolResult(name, text);
-    },
-    onResult({ subtype }) {
-      if (subtype !== "success") {
-        console.error(`\n[Facilitator agent ended with: ${subtype}]`);
-      }
-    },
-  });
-
-  // Ensure terminal output ends with newline; flush transcript turn too
-  process.stdout.write("\n");
-  transcript.endFacilitatorTurn(summary.sessionId);
-  return { sessionId: summary.sessionId, facilitatorText: summary.text };
 }
 
 // ── Bookkeeper helpers ─────────────────────────────────────────────────
@@ -388,183 +335,60 @@ async function main() {
   const resumePrompt = `The player has returned to the game after closing the terminal. Follow your sitting-management protocol: read your scratchpad and \`list\` your npcs/factions/character_sheets books to reorient, then recap briefly (a sentence or two on where we left off) and ask what they want to do next. Don't dump the full memory state — just orient.`;
   const freshSessionPrompt = `The player has started a fresh session. Read your scratchpad and \`list\` your npcs/factions/character_sheets books to see what world state already exists. If there are existing PC(s), NPCs, or factions, greet the player warmly, briefly describe what you remember, and ask whether they're continuing with an existing PC, introducing a new PC in this world, or starting something else. If the books are empty, this is a true first session — run the session zero greeting flow.`;
 
-  // ── Phase-1 split-agent runtime ────────────────────────────────────────
-  // When --split-agents is set, replace the monolithic facilitator with a
-  // Director (planning + tool calls + brief) and a Narrator (voice + prose
-  // from the brief). Two parallel sessions, two parallel sessionIds.
-  //
-  // Phase 1 simplifications:
-  //   - No persistent sessionIds across runs (always starts fresh; no /resume)
-  //   - /new, /new-session unsupported (use a fresh `npm run play` invocation)
-  //   - Opening message + first-response capture is shared with monolith logic
-  //
-  // Plan: ~/.claude/plans/brigliadoro-director-narrator-split.md. Cutover to
-  // default + full session-mode parity is Phase 4 of that plan.
+  // ── Resolve session mode + build the per-turn agent runner ────────────
+  // The TurnRunner strategy interface absorbs per-turn agent invocation
+  // so this file holds only the input loop + bookkeeper plumbing. Two
+  // implementations: monolith (one query() per turn, full system prompt,
+  // resume threaded across turns and persisted to disk) and split-agents
+  // Phase 1 (Director + Narrator with ephemeral session ids only — no
+  // cross-run persistence, /new and /new-session blocked at the input
+  // layer). Phase-4 cutover deletes the monolith.
+  let firstMode: "initial" | "fresh-session" | "resume";
+  let resumeId: string | undefined;
   if (args.splitAgents) {
     console.log(
       "[--split-agents: Phase-1 runtime — Director + Narrator split. /resume, /new, /new-session not supported in this mode yet.]\n"
     );
+    firstMode = "initial";
+    resumeId = undefined;
+  } else {
+    const resolved = await resolveSessionMode({
+      stateDir,
+      forced: args.sessionMode,
+      playerSource,
+    });
+    firstMode = resolved.firstMode;
+    resumeId = resolved.resumeId;
+    if (resumeId) {
+      console.log(`[Resuming session ${resumeId.slice(0, 8)}…]\n`);
+    }
+  }
 
-    let directorSessionId: string | undefined;
-    let narratorSessionId: string | undefined;
-
-    async function runSplitTurn(
-      playerInputForBrief: string,
-      directorPromptText: string
-    ): Promise<{ prose: string }> {
-      const directorResult = await runDirector({
-        prompt: directorPromptText,
-        systemPrompt:
-          DIRECTOR_PROMPT +
-          `\n\n## Game-specific facilitator context\n\n` +
-          `The system prompt below was authored for this specific game. It carries voice cues, principles, and tool-usage guidance you should treat as authoritative for game-specific framing. You — the Director — focus on the planning + brief side; the voice cues are most useful when populating brief.voice_hints and beat.intent.\n\n` +
-          systemPrompt,
+  const turnRunner: TurnRunner = args.splitAgents
+    ? createSplitTurnRunner({
+        gameSystemPrompt: systemPrompt,
         gameServer,
         facilitatorServer,
-        resumeSessionId: directorSessionId,
-        model: "sonnet",
+        transcript,
+      })
+    : createMonolithTurnRunner({
+        sharedOptions,
+        stateDir,
+        initialSessionId: resumeId,
         transcript,
       });
 
-      if (!directorResult.ok) {
-        // Director didn't return a parseable brief. Phase-1 fallback: log
-        // diagnostic, surface a degraded prose turn so the player sees
-        // something rather than a silent hang.
-        console.error(
-          `\n[Director failed: ${directorResult.error}]\n` +
-            `[Raw text was: ${directorResult.rawText.slice(0, 400)}…]\n`
-        );
-        if (directorResult.sessionId) directorSessionId = directorResult.sessionId;
-        const degraded =
-          "(The Director returned a malformed brief. " +
-          "This is a Phase-1 split-agents bug worth reporting; for now, " +
-          "try rephrasing or use a fresh terminal without --split-agents.)";
-        console.log("\n" + degraded + "\n");
-        transcript.recordFacilitatorChunk(degraded + "\n");
-        transcript.endFacilitatorTurn(directorResult.sessionId ?? "");
-        return { prose: degraded };
-      }
-
-      directorSessionId = directorResult.sessionId;
-
-      const narratorResult = await runNarrator({
-        brief: {
-          ...directorResult.brief,
-          // Always carry the player's verbatim input even if the Director
-          // forgot to populate it.
-          player_input:
-            directorResult.brief.player_input || playerInputForBrief,
-        },
-        systemPrompt: NARRATOR_PROMPT,
-        resumeSessionId: narratorSessionId,
-        model: "sonnet",
-        transcript,
-      });
-
-      narratorSessionId = narratorResult.sessionId;
-
-      return { prose: narratorResult.prose };
-    }
-
-    // Opening message + first-response capture (mirrors the monolith path)
-    const opening = await presentOpeningMessage({
-      openingMessage,
-      playerSource,
-      transcript,
-    });
-    if (opening.kind === "quit") {
-      await playerSource.close();
-      console.log("\n[Thanks for playing!]");
-      return;
-    }
-    const firstResponse =
-      opening.kind === "responded" ? opening.text : undefined;
-
-    transcript.beginSession({
-      gameName: config.name,
-      mode: "initial",
-      seedLabel: seedModeLabel,
-    });
-
-    // First turn — frame as session-zero / initial greeting.
-    turnNumber += 1;
-    const firstPrompt = buildInitialPrompt({
-      gameName: config.name,
-      openingMessage,
-      playerFirstResponse: firstResponse,
-      playerPreferencesText,
-    });
-    const firstSplit = await runSplitTurn(
-      firstResponse ?? "(no input — opening turn)",
-      firstPrompt
-    );
-    enqueueBookkeeper({
-      turnText:
-        firstResponse !== undefined
-          ? `> ${firstResponse}\n\n${firstSplit.prose}`
-          : firstSplit.prose,
-      turn: turnNumber,
-      // Pass Director sessionId for trace correlation (Narrator's is
-      // separate but the bookkeeper only needs one anchor).
-      sessionId: directorSessionId ?? "",
-    });
-
-    // Turn loop — split-agent variant.
-    while (true) {
-      const input = await promptPlayer(playerSource, "\n> ");
-      const trimmed = input.trim();
-      const lower = trimmed.toLowerCase();
-
-      if (lower === "/quit") {
-        await awaitPendingBookkeeper();
-        console.log("\n[Thanks for playing!]");
-        break;
-      }
-      if (lower === "/new" || lower === "/new-session") {
-        console.log(
-          `[${lower} not supported in Phase-1 split-agents mode. Use /quit and restart.]\n`
-        );
-        continue;
-      }
-      if (trimmed === "") continue;
-
-      console.log("");
-      await awaitPendingBookkeeper();
-      transcript.recordPlayerInput(input);
-      turnNumber += 1;
-
-      const split = await runSplitTurn(input, input);
-      enqueueBookkeeper({
-        turnText: `> ${input}\n\n${split.prose}`,
-        turn: turnNumber,
-        sessionId: directorSessionId ?? "",
-      });
-    }
-
-    await playerSource.close();
-    return;
-  }
-
-  // ── Monolith path (default) ────────────────────────────────────────────
-
-  // Decide the first-turn mode. May print status banners and/or prompt the
-  // player interactively (when there's a savedId and no forced flag).
-  const { firstMode, resumeId } = await resolveSessionMode({
-    stateDir,
-    forced: args.sessionMode,
-    playerSource,
+  transcript.beginSession({
+    gameName: config.name,
+    mode: firstMode,
+    seedLabel: seedModeLabel,
   });
-
-  if (resumeId) {
-    console.log(`[Resuming session ${resumeId.slice(0, 8)}…]\n`);
-  }
-  transcript.beginSession({ gameName: config.name, mode: firstMode, seedLabel: seedModeLabel });
 
   // In initial mode, show the pre-rendered opening (if configured) and
   // capture the player's first response before the agent's first call.
   // Saves an LLM call and ensures a consistent first impression in the
-  // characterizer-set voice. Resume / fresh-session modes skip the opening
-  // — the player's been here before, no introduction needed.
+  // characterizer-set voice. Resume / fresh-session modes skip the
+  // opening — the player has been here before.
   let firstPlayerResponseAfterOpening: string | undefined;
   if (firstMode === "initial") {
     const opening = await presentOpeningMessage({
@@ -595,27 +419,22 @@ async function main() {
           });
 
   turnNumber += 1;
-  const firstResult = await streamTurn(
-    query({
-      prompt: firstPrompt,
-      options: resumeId ? { ...sharedOptions, resume: resumeId } : sharedOptions,
-    }),
-    transcript
-  );
-  let sessionId = firstResult.sessionId;
-  writeSessionId(stateDir, sessionId);
+  const firstResult = await turnRunner.runTurn({
+    userPrompt: firstPrompt,
+    playerInput: firstPlayerResponseAfterOpening,
+  });
   enqueueBookkeeper({
     turnText:
       firstPlayerResponseAfterOpening !== undefined
         ? `> ${firstPlayerResponseAfterOpening}\n\n${firstResult.facilitatorText}`
         : firstResult.facilitatorText,
     turn: turnNumber,
-    sessionId,
+    sessionId: firstResult.sessionIdForTrace,
   });
 
-  // Play loop
+  // ── Unified turn loop ──────────────────────────────────────────────────
   while (true) {
-    const input = await promptPlayer(playerSource, "\n> ");
+    const input = await playerSource.prompt("\n> ");
     const trimmed = input.trim();
     const lower = trimmed.toLowerCase();
 
@@ -626,97 +445,101 @@ async function main() {
       break;
     }
 
-    if (lower === "/new") {
-      const confirmed = await confirmPrompt(
-        playerSource,
-        "This will wipe ALL state (scratchpad, character sheets, NPCs, factions) and start a new campaign. Continue?",
-        false
-      );
-      if (!confirmed) {
-        console.log("[Cancelled.]");
+    if (lower === "/new" || lower === "/new-session") {
+      if (!turnRunner.supportsSessionCommands) {
+        console.log(
+          `[${lower} not supported in Phase-1 split-agents mode. Use /quit and restart.]\n`
+        );
         continue;
       }
-      // Flush in-flight writes before wiping state so we don't race the
-      // bookkeeper writing into files we're about to delete.
-      await awaitPendingBookkeeper();
-      const removed = clearAllState(stateDir);
-      console.log(
-        `\n[Wiped: ${removed.length > 0 ? removed.join(", ") : "nothing to wipe"}]\n`
-      );
-      transcript.resetForNewSession();
-      transcript.beginSession({ gameName: config.name, mode: "initial", seedLabel: seedModeLabel });
-      turnNumber = 1;
 
-      // Mirror the initial-mode openingMessage flow on /new — same player
-      // experience as a true first-time play.
-      const newRunOpening = await presentOpeningMessage({
-        openingMessage,
-        playerSource,
-        transcript,
-      });
-      if (newRunOpening.kind === "quit") {
+      if (lower === "/new") {
+        const confirmed = await confirmPrompt(
+          playerSource,
+          "This will wipe ALL state (scratchpad, character sheets, NPCs, factions) and start a new campaign. Continue?",
+          false
+        );
+        if (!confirmed) {
+          console.log("[Cancelled.]");
+          continue;
+        }
+        // Flush in-flight writes before wiping state so we don't race the
+        // bookkeeper writing into files we're about to delete.
         await awaitPendingBookkeeper();
-        await playerSource.close();
-        console.log("\n[Thanks for playing!]");
-        return;
+        const removed = clearAllState(stateDir);
+        console.log(
+          `\n[Wiped: ${removed.length > 0 ? removed.join(", ") : "nothing to wipe"}]\n`
+        );
+        transcript.resetForNewSession();
+        transcript.beginSession({
+          gameName: config.name,
+          mode: "initial",
+          seedLabel: seedModeLabel,
+        });
+        turnNumber = 1;
+        turnRunner.resetSession();
+
+        // Mirror the initial-mode openingMessage flow on /new — same
+        // player experience as a true first-time play.
+        const newRunOpening = await presentOpeningMessage({
+          openingMessage,
+          playerSource,
+          transcript,
+        });
+        if (newRunOpening.kind === "quit") {
+          await awaitPendingBookkeeper();
+          await playerSource.close();
+          console.log("\n[Thanks for playing!]");
+          return;
+        }
+        const newRunFirstResponse =
+          newRunOpening.kind === "responded"
+            ? newRunOpening.text
+            : undefined;
+
+        const newRunInitialPrompt = buildInitialPrompt({
+          gameName: config.name,
+          openingMessage,
+          playerFirstResponse: newRunFirstResponse,
+          playerPreferencesText,
+        });
+        const res = await turnRunner.runTurn({
+          userPrompt: newRunInitialPrompt,
+          playerInput: newRunFirstResponse,
+        });
+        enqueueBookkeeper({
+          turnText:
+            newRunFirstResponse !== undefined
+              ? `> ${newRunFirstResponse}\n\n${res.facilitatorText}`
+              : res.facilitatorText,
+          turn: turnNumber,
+          sessionId: res.sessionIdForTrace,
+        });
+        continue;
       }
-      const newRunFirstResponse =
-        newRunOpening.kind === "responded" ? newRunOpening.text : undefined;
 
-      const newRunInitialPrompt = buildInitialPrompt({
-        gameName: config.name,
-        openingMessage,
-        playerFirstResponse: newRunFirstResponse,
-        playerPreferencesText,
-      });
-
-      const res = await streamTurn(
-        query({
-          prompt: newRunInitialPrompt,
-          options: sharedOptions,
-        }),
-        transcript
-      );
-      sessionId = res.sessionId;
-      writeSessionId(stateDir, sessionId);
-      enqueueBookkeeper({
-        turnText:
-          newRunFirstResponse !== undefined
-            ? `> ${newRunFirstResponse}\n\n${res.facilitatorText}`
-            : res.facilitatorText,
-        turn: turnNumber,
-        sessionId,
-      });
-      continue;
-    }
-
-    if (lower === "/new-session") {
+      // /new-session — keep world state, drop the Claude session.
       await awaitPendingBookkeeper();
       clearSessionId(stateDir);
       console.log("\n[Cleared session-id; world state preserved.]\n");
       transcript.resetForNewSession();
-      transcript.beginSession({ gameName: config.name, mode: "fresh-session", seedLabel: seedModeLabel });
+      transcript.beginSession({
+        gameName: config.name,
+        mode: "fresh-session",
+        seedLabel: seedModeLabel,
+      });
       turnNumber += 1;
-      const res = await streamTurn(
-        query({
-          prompt: freshSessionPrompt,
-          options: sharedOptions,
-        }),
-        transcript
-      );
-      sessionId = res.sessionId;
-      writeSessionId(stateDir, sessionId);
+      turnRunner.resetSession();
+      const res = await turnRunner.runTurn({ userPrompt: freshSessionPrompt });
       enqueueBookkeeper({
         turnText: res.facilitatorText,
         turn: turnNumber,
-        sessionId,
+        sessionId: res.sessionIdForTrace,
       });
       continue;
     }
 
-    if (trimmed === "") {
-      continue;
-    }
+    if (trimmed === "") continue;
 
     console.log("");
 
@@ -726,22 +549,11 @@ async function main() {
 
     transcript.recordPlayerInput(input);
     turnNumber += 1;
-    const res = await streamTurn(
-      query({
-        prompt: input,
-        options: {
-          ...sharedOptions,
-          resume: sessionId,
-        },
-      }),
-      transcript
-    );
-    sessionId = res.sessionId;
-    writeSessionId(stateDir, sessionId);
+    const res = await turnRunner.runTurn({ userPrompt: input });
     enqueueBookkeeper({
       turnText: `> ${input}\n\n${res.facilitatorText}`,
       turn: turnNumber,
-      sessionId,
+      sessionId: res.sessionIdForTrace,
     });
   }
 
