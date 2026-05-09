@@ -26,11 +26,6 @@ import { runNarrator } from "./lib/runner/narrator.js";
 import { DIRECTOR_PROMPT } from "./lib/runner/prompts/director.js";
 import { NARRATOR_PROMPT } from "./lib/runner/prompts/narrator.js";
 import {
-  installSeededRng,
-  installSequenceRng,
-  parseSequenceArg,
-} from "./lib/runner/seeded-rng.js";
-import {
   createScriptSource,
   createScriptTailSource,
   createStdinSource,
@@ -40,6 +35,22 @@ import {
   streamSdkQuery,
   summariseToolInput,
 } from "./lib/runner/sdk-utils.js";
+import {
+  applySeedMode,
+  loadPlayerPreferences,
+  parseRunnerArgs,
+} from "./lib/runner/cli-args.js";
+import {
+  clearAllState,
+  clearSessionId,
+  confirmPrompt,
+  resolveSessionMode,
+  writeSessionId,
+} from "./lib/runner/session-mode.js";
+import {
+  buildInitialPrompt,
+  presentOpeningMessage,
+} from "./lib/runner/opening-message.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -148,56 +159,6 @@ function readBookSummaries(filePath: string): Record<string, string> {
   return out;
 }
 
-// ── Save / resume helpers ──────────────────────────────────────────────
-
-function readSavedSessionId(stateDir: string): string | undefined {
-  const p = path.join(stateDir, "session-id.txt");
-  if (!fs.existsSync(p)) return undefined;
-  try {
-    const id = fs.readFileSync(p, "utf-8").trim();
-    return id || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function writeSessionId(stateDir: string, id: string): void {
-  if (!id) return;
-  fs.mkdirSync(stateDir, { recursive: true });
-  fs.writeFileSync(path.join(stateDir, "session-id.txt"), id, "utf-8");
-}
-
-/** Delete every file directly in stateDir (preserves the dir itself). */
-function clearAllState(stateDir: string): string[] {
-  if (!fs.existsSync(stateDir)) return [];
-  const removed: string[] = [];
-  for (const entry of fs.readdirSync(stateDir)) {
-    const p = path.join(stateDir, entry);
-    try {
-      if (fs.statSync(p).isFile()) {
-        fs.unlinkSync(p);
-        removed.push(entry);
-      }
-    } catch {
-      /* best effort */
-    }
-  }
-  return removed;
-}
-
-/** Delete just the session-id pointer; preserves scratchpad, books, etc.
- *  Returns true if a session-id file existed and was removed. */
-function clearSessionId(stateDir: string): boolean {
-  const p = path.join(stateDir, "session-id.txt");
-  if (!fs.existsSync(p)) return false;
-  try {
-    fs.unlinkSync(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Produce a ≤500-char premise/tone snippet for the bookkeeper's context.
  * Prefers `config.description` (already crisp, set by the characterizer);
@@ -214,19 +175,6 @@ function buildShortLoreSummary(
   return stripped.length > 500 ? stripped.slice(0, 500) + "…" : stripped;
 }
 
-async function confirmPrompt(
-  source: PlayerInputSource,
-  question: string,
-  defaultYes: boolean
-): Promise<boolean> {
-  const suffix = defaultYes ? "[Y/n]" : "[y/N]";
-  const answer = (await promptPlayer(source, `${question} ${suffix} `))
-    .trim()
-    .toLowerCase();
-  if (!answer) return defaultYes;
-  return answer === "y" || answer === "yes";
-}
-
 async function main() {
   // Load runner config
   const configPath = path.join(__dirname, "config.json");
@@ -239,42 +187,29 @@ async function main() {
 
   const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
 
-  // Parse seed-mode flags early. These monkey-patch Math.random process-
-  // wide so tool primitives become deterministic. Must happen BEFORE the
-  // game server is constructed, in case a tool factory uses RNG at setup.
-  const argvRaw = process.argv.slice(2);
-  const seedArg = argvRaw.find((a) => a.startsWith("--seed="));
-  const sequenceArg = argvRaw.find((a) => a.startsWith("--rng-sequence="));
-  if (seedArg && sequenceArg) {
-    console.error(
-      "Error: --seed and --rng-sequence are mutually exclusive."
-    );
+  // Parse CLI args (pure). Errors print and exit; success returns a typed
+  // RunnerArgs.
+  const argResult = parseRunnerArgs(process.argv.slice(2));
+  if (!argResult.ok) {
+    console.error(argResult.error);
     process.exit(1);
   }
-  let seedModeLabel: string | undefined;
-  if (seedArg) {
-    const raw = seedArg.slice("--seed=".length).trim();
-    const n = Number(raw);
-    if (!Number.isFinite(n) || !Number.isInteger(n)) {
-      console.error(
-        `Error: --seed requires an integer value, got: ${raw || "<empty>"}`
-      );
-      process.exit(1);
-    }
-    installSeededRng(n);
-    seedModeLabel = `seed=${n}`;
-    console.log(`[seed mode: ${seedModeLabel} — Math.random is deterministic]`);
-  } else if (sequenceArg) {
-    const raw = sequenceArg.slice("--rng-sequence=".length);
+  const args = argResult.args;
+
+  // Apply seed mode early — this monkey-patches Math.random process-wide
+  // so tool primitives become deterministic. Must happen BEFORE the game
+  // server is dynamically imported, since tool factories may use RNG at
+  // construction.
+  applySeedMode(args.seedMode);
+
+  // Load --player-preferences file (file IO; exits on error). Done early so
+  // we fail fast before booting the game server / agents.
+  let playerPreferencesText: string | undefined;
+  if (args.playerPreferencesPath) {
     try {
-      const values = parseSequenceArg(raw);
-      installSequenceRng(values);
-      seedModeLabel = `scripted (${values.length} values)`;
-      console.log(
-        `[seed mode: ${seedModeLabel} — Math.random cycles through the given values]`
-      );
-    } catch (err) {
-      console.error(`Error: ${(err as Error).message}`);
+      playerPreferencesText = loadPlayerPreferences(args.playerPreferencesPath);
+    } catch (e) {
+      console.error(`Error: ${(e as Error).message}`);
       process.exit(1);
     }
   }
@@ -316,62 +251,9 @@ async function main() {
         : undefined,
   });
 
-  // Parse session-mode launch flags (seed-mode flags were parsed earlier).
-  const forceNew = argvRaw.includes("--new");
-  const forceNewSession = argvRaw.includes("--new-session");
-  const forceResume = argvRaw.includes("--resume");
-  const modeCount = [forceNew, forceNewSession, forceResume].filter(Boolean).length;
-  if (modeCount > 1) {
-    console.error(
-      "Error: --new, --new-session, and --resume are mutually exclusive."
-    );
-    process.exit(1);
-  }
-
-  // Phase-1 split-agent flag — opt-in alternative runtime where the
-  // monolithic facilitator is replaced by a Director (planning + tools)
-  // and a Narrator (voice + prose), with a typed brief between them.
-  // Plan: ~/.claude/plans/brigliadoro-director-narrator-split.md.
-  // Phase 1: regular turns + /quit + opening message. Session-mode commands
-  // (/new, /new-session, /resume) and persistent session IDs are deferred
-  // to later phases of the plan.
-  const splitAgents = argvRaw.includes("--split-agents");
-
-  // Parse --player-preferences=FILE — a markdown file with pre-baked answers
-  // to the universal session-zero questions (tone, content to avoid, story
-  // shape, etc). When present, the facilitator is told to treat these as
-  // already-answered and skip the questions. Useful for testing-with-fixed-
-  // preferences and for the LLM-player harness where personas embed their
-  // own preferences.
-  const preferencesArg = argvRaw.find((a) =>
-    a.startsWith("--player-preferences=")
-  );
-  let playerPreferencesText: string | undefined;
-  if (preferencesArg) {
-    const prefPath = preferencesArg
-      .slice("--player-preferences=".length)
-      .trim();
-    if (!fs.existsSync(prefPath)) {
-      console.error(
-        `Error: --player-preferences file not found: ${prefPath}`
-      );
-      process.exit(1);
-    }
-    try {
-      playerPreferencesText = fs.readFileSync(prefPath, "utf-8").trim();
-    } catch (e) {
-      console.error(
-        `Error reading --player-preferences file: ${(e as Error).message}`
-      );
-      process.exit(1);
-    }
-    if (!playerPreferencesText) {
-      console.error(
-        `Error: --player-preferences file is empty: ${prefPath}`
-      );
-      process.exit(1);
-    }
-  }
+  // Seed-mode label threaded into transcript headers; also referenced by
+  // /new and /new-session handlers when they begin a fresh session.
+  const seedModeLabel = args.seedMode?.label;
 
   // Display header
   console.log(`\n${config.name}`);
@@ -384,37 +266,28 @@ async function main() {
   // Player input source — stdin by default; --player-script=FILE swaps in
   // a pre-recorded NDJSON script; --player-script-tail=FILE tails the file
   // for appended lines so an external driver can feed turns live.
-  const scriptArg = argvRaw.find((a) => a.startsWith("--player-script="));
-  const scriptTailArg = argvRaw.find((a) =>
-    a.startsWith("--player-script-tail=")
+  const usingScriptedInput = Boolean(
+    args.playerScriptPath || args.playerScriptTailPath
   );
-  if (scriptArg && scriptTailArg) {
-    console.error(
-      "Specify only one of --player-script=FILE or --player-script-tail=FILE."
-    );
-    process.exit(1);
-  }
-  const rl = scriptArg || scriptTailArg ? null : createReadline();
-  const playerSource: PlayerInputSource = scriptArg
-    ? createScriptSource(scriptArg.slice("--player-script=".length).trim())
-    : scriptTailArg
-    ? createScriptTailSource(
-        scriptTailArg.slice("--player-script-tail=".length).trim()
-      )
+  const rl = usingScriptedInput ? null : createReadline();
+  const playerSource: PlayerInputSource = args.playerScriptPath
+    ? createScriptSource(args.playerScriptPath)
+    : args.playerScriptTailPath
+    ? createScriptTailSource(args.playerScriptTailPath)
     : createStdinSource(rl!);
-  if (scriptArg) {
+  if (args.playerScriptPath) {
     console.log(
-      `[player source: script — reading input from ${scriptArg.slice("--player-script=".length).trim()}]\n`
+      `[player source: script — reading input from ${args.playerScriptPath}]\n`
     );
-  } else if (scriptTailArg) {
+  } else if (args.playerScriptTailPath) {
     console.log(
-      `[player source: script-tail — tailing ${scriptTailArg.slice("--player-script-tail=".length).trim()} for appended turns]\n`
+      `[player source: script-tail — tailing ${args.playerScriptTailPath} for appended turns]\n`
     );
   }
 
-  if (preferencesArg) {
+  if (args.playerPreferencesPath) {
     console.log(
-      `[player preferences: loaded from ${preferencesArg.slice("--player-preferences=".length).trim()} — facilitator will skip session-zero questions]\n`
+      `[player preferences: loaded from ${args.playerPreferencesPath} — facilitator will skip session-zero questions]\n`
     );
   }
 
@@ -512,39 +385,6 @@ async function main() {
       ? ((config as { openingMessage: string }).openingMessage)
       : undefined;
 
-  function buildInitialPrompt(opts: {
-    openingShownToPlayer: boolean;
-    playerFirstResponse?: string;
-  }): string {
-    const sections: string[] = [];
-
-    sections.push(`The player has just started a new game of ${config.name}.`);
-
-    if (opts.openingShownToPlayer && openingMessage && opts.playerFirstResponse) {
-      sections.push(
-        `They have already seen your opening message:\n\n"""\n${openingMessage}\n"""`
-      );
-      sections.push(
-        `Their first response was:\n\n"""\n${opts.playerFirstResponse}\n"""`
-      );
-      sections.push(
-        `Continue from here. Don't repeat the opening message — they've read it. Begin the session zero flow / character creation as your instructions describe, picking up on what they said.`
-      );
-    } else {
-      sections.push(
-        `Greet them and begin the session zero flow as described in your instructions.`
-      );
-    }
-
-    if (playerPreferencesText) {
-      sections.push(
-        `## Player preferences (supplied in advance)\n\nThe player has provided these answers ahead of time. Treat them as already-answered for the tone / safety / story-shape questions you'd otherwise ask during session zero. Do not re-ask what's covered here. If something important isn't covered, you can still ask about that.\n\n${playerPreferencesText}`
-      );
-    }
-
-    return sections.join("\n\n");
-  }
-
   const resumePrompt = `The player has returned to the game after closing the terminal. Follow your sitting-management protocol: read your scratchpad and \`list\` your npcs/factions/character_sheets books to reorient, then recap briefly (a sentence or two on where we left off) and ask what they want to do next. Don't dump the full memory state — just orient.`;
   const freshSessionPrompt = `The player has started a fresh session. Read your scratchpad and \`list\` your npcs/factions/character_sheets books to see what world state already exists. If there are existing PC(s), NPCs, or factions, greet the player warmly, briefly describe what you remember, and ask whether they're continuing with an existing PC, introducing a new PC in this world, or starting something else. If the books are empty, this is a true first session — run the session zero greeting flow.`;
 
@@ -560,7 +400,7 @@ async function main() {
   //
   // Plan: ~/.claude/plans/brigliadoro-director-narrator-split.md. Cutover to
   // default + full session-mode parity is Phase 4 of that plan.
-  if (splitAgents) {
+  if (args.splitAgents) {
     console.log(
       "[--split-agents: Phase-1 runtime — Director + Narrator split. /resume, /new, /new-session not supported in this mode yet.]\n"
     );
@@ -627,20 +467,18 @@ async function main() {
     }
 
     // Opening message + first-response capture (mirrors the monolith path)
-    let firstResponse: string | undefined;
-    if (openingMessage) {
-      console.log(`\n${openingMessage}\n`);
-      transcript.recordFacilitatorChunk(openingMessage + "\n");
-      const userInput = await promptPlayer(playerSource, "\n> ");
-      const trimmed = userInput.trim();
-      if (trimmed.toLowerCase() === "/quit") {
-        await playerSource.close();
-        console.log("\n[Thanks for playing!]");
-        return;
-      }
-      firstResponse = trimmed;
-      transcript.recordPlayerInput(trimmed);
+    const opening = await presentOpeningMessage({
+      openingMessage,
+      playerSource,
+      transcript,
+    });
+    if (opening.kind === "quit") {
+      await playerSource.close();
+      console.log("\n[Thanks for playing!]");
+      return;
     }
+    const firstResponse =
+      opening.kind === "responded" ? opening.text : undefined;
 
     transcript.beginSession({
       gameName: config.name,
@@ -651,8 +489,10 @@ async function main() {
     // First turn — frame as session-zero / initial greeting.
     turnNumber += 1;
     const firstPrompt = buildInitialPrompt({
-      openingShownToPlayer: Boolean(openingMessage),
+      gameName: config.name,
+      openingMessage,
       playerFirstResponse: firstResponse,
+      playerPreferencesText,
     });
     const firstSplit = await runSplitTurn(
       firstResponse ?? "(no input — opening turn)",
@@ -707,78 +547,39 @@ async function main() {
 
   // ── Monolith path (default) ────────────────────────────────────────────
 
-  // Decide the first-turn mode.
-  const savedId = readSavedSessionId(stateDir);
-  type FirstMode = "resume" | "fresh-session" | "initial";
-  let firstMode: FirstMode;
-  let resumeId: string | undefined;
+  // Decide the first-turn mode. May print status banners and/or prompt the
+  // player interactively (when there's a savedId and no forced flag).
+  const { firstMode, resumeId } = await resolveSessionMode({
+    stateDir,
+    forced: args.sessionMode,
+    playerSource,
+  });
 
-  if (forceNew) {
-    const removed = clearAllState(stateDir);
-    console.log(
-      `[--new: ${removed.length > 0 ? `wiped ${removed.join(", ")}` : "no state to wipe"}]\n`
-    );
-    firstMode = "initial";
-    resumeId = undefined;
-  } else if (forceNewSession) {
-    if (clearSessionId(stateDir)) {
-      console.log("[--new-session: cleared session-id; world state preserved]\n");
-    } else {
-      console.log("[--new-session: no prior session; world state preserved]\n");
-    }
-    firstMode = "fresh-session";
-    resumeId = undefined;
-  } else if (forceResume) {
-    if (savedId) {
-      firstMode = "resume";
-      resumeId = savedId;
-    } else {
-      console.log("[--resume: no saved session found; starting fresh]\n");
-      firstMode = "initial";
-      resumeId = undefined;
-    }
-  } else if (savedId) {
-    const wantResume = await confirmPrompt(playerSource, "Saved session found. Resume?", true);
-    console.log("");
-    if (wantResume) {
-      firstMode = "resume";
-      resumeId = savedId;
-    } else {
-      // Declined resume — keep world state, start a fresh Claude session.
-      clearSessionId(stateDir);
-      firstMode = "fresh-session";
-      resumeId = undefined;
-    }
-  } else {
-    firstMode = "initial";
-    resumeId = undefined;
-  }
-
-  // First turn
   if (resumeId) {
     console.log(`[Resuming session ${resumeId.slice(0, 8)}…]\n`);
   }
   transcript.beginSession({ gameName: config.name, mode: firstMode, seedLabel: seedModeLabel });
 
-  // If we have a pre-rendered openingMessage and we're in initial mode,
-  // show it to the player first and capture their response BEFORE the
-  // agent's first call. The agent then picks up from "the player saw the
-  // opening and responded with X." This saves an LLM call, ensures
-  // consistent first impression, and demonstrates SOD recursively
-  // (intro is a generation-time concern; agent loop is runtime).
+  // In initial mode, show the pre-rendered opening (if configured) and
+  // capture the player's first response before the agent's first call.
+  // Saves an LLM call and ensures a consistent first impression in the
+  // characterizer-set voice. Resume / fresh-session modes skip the opening
+  // — the player's been here before, no introduction needed.
   let firstPlayerResponseAfterOpening: string | undefined;
-  if (firstMode === "initial" && openingMessage) {
-    console.log(`\n${openingMessage}\n`);
-    transcript.recordFacilitatorChunk(openingMessage + "\n");
-    const userInput = await promptPlayer(playerSource, "\n> ");
-    const trimmed = userInput.trim();
-    if (trimmed.toLowerCase() === "/quit") {
+  if (firstMode === "initial") {
+    const opening = await presentOpeningMessage({
+      openingMessage,
+      playerSource,
+      transcript,
+    });
+    if (opening.kind === "quit") {
       await playerSource.close();
       console.log("\n[Thanks for playing!]");
       return;
     }
-    firstPlayerResponseAfterOpening = trimmed;
-    transcript.recordPlayerInput(trimmed);
+    if (opening.kind === "responded") {
+      firstPlayerResponseAfterOpening = opening.text;
+    }
   }
 
   const firstPrompt =
@@ -787,8 +588,10 @@ async function main() {
       : firstMode === "fresh-session"
         ? freshSessionPrompt
         : buildInitialPrompt({
-            openingShownToPlayer: Boolean(openingMessage),
+            gameName: config.name,
+            openingMessage,
             playerFirstResponse: firstPlayerResponseAfterOpening,
+            playerPreferencesText,
           });
 
   turnNumber += 1;
@@ -846,25 +649,25 @@ async function main() {
 
       // Mirror the initial-mode openingMessage flow on /new — same player
       // experience as a true first-time play.
-      let newRunFirstResponse: string | undefined;
-      if (openingMessage) {
-        console.log(`\n${openingMessage}\n`);
-        transcript.recordFacilitatorChunk(openingMessage + "\n");
-        const userInput = await promptPlayer(playerSource, "\n> ");
-        const trimmedNew = userInput.trim();
-        if (trimmedNew.toLowerCase() === "/quit") {
-          await awaitPendingBookkeeper();
-          await playerSource.close();
-          console.log("\n[Thanks for playing!]");
-          return;
-        }
-        newRunFirstResponse = trimmedNew;
-        transcript.recordPlayerInput(trimmedNew);
+      const newRunOpening = await presentOpeningMessage({
+        openingMessage,
+        playerSource,
+        transcript,
+      });
+      if (newRunOpening.kind === "quit") {
+        await awaitPendingBookkeeper();
+        await playerSource.close();
+        console.log("\n[Thanks for playing!]");
+        return;
       }
+      const newRunFirstResponse =
+        newRunOpening.kind === "responded" ? newRunOpening.text : undefined;
 
       const newRunInitialPrompt = buildInitialPrompt({
-        openingShownToPlayer: Boolean(openingMessage),
+        gameName: config.name,
+        openingMessage,
         playerFirstResponse: newRunFirstResponse,
+        playerPreferencesText,
       });
 
       const res = await streamTurn(
