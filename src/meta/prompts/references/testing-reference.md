@@ -149,19 +149,22 @@ For pausable tools, also:
 import { describe, it, expect } from "vitest";
 import { SessionStore } from "../lib/state/session-store.js";
 import { InMemoryStepStore } from "../lib/state/step-store.js";
+import { seededRng, sequenceRng } from "../lib/test-helpers/index.js";
 import { createMyTool } from "../tools/my-tool.js";
 
 describe("my_tool handler persists to session", () => {
   it("writes the resource to the expected (entity, key) on done", async () => {
     const session = new SessionStore();
     const steps = new InMemoryStepStore(); // only if pausable
-    const tool = createMyTool(steps, session);
+    // Pass a seeded rng to the factory. The handler threads it into every
+    // primitive call inside, making the test deterministic. Use seededRng
+    // for "any seed will do" cases; use sequenceRng to force specific dice
+    // outcomes that drive a particular branch.
+    const tool = createMyTool(steps, session, sequenceRng([0.999, 0.999]));
 
-    // Drive the handler through whatever sequence reaches the write path.
-    // Use an RNG sequence / known inputs that force a branch where the
-    // tool should persist — e.g. a push that generates 2 markers.
-    // Call the handler via the SDK's invocation shape, or exercise its
-    // async callback directly if the tool factory exposes it testably.
+    // Drive the handler through the sequence that reaches the write path —
+    // for a pausable tool, that's the full start → continue → ... → done
+    // chain; for a one-shot, a single handler call.
 
     // After the write branch runs:
     const resource = session.getResource("expected_entity", "expected_key");
@@ -169,6 +172,8 @@ describe("my_tool handler persists to session", () => {
   });
 });
 ```
+
+If the tool factory's signature doesn't take an `rng` parameter, that's a tool-builder bug — report it rather than working around it with `Math.random` or unseeded probes. Without an injectable rng, the handler always uses `Math.random`, this test class becomes flaky, and the bug it's meant to catch slips through. See `tool-reference.md#rng-threading-and-handler-determinism` for the contract the tool-builder is supposed to honour.
 
 **What it catches.** Wrong signature (e.g. 4 args vs. 3 for `setResource`), wrong `(entity, key)` used by the writer vs. the reader, missing `session.setResource` call entirely. These bugs compile fine and pass all pure-function tests; they surface only at play time.
 

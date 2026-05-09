@@ -179,7 +179,9 @@ export function myToolPure(
 }
 
 // The MCP factory. Thin wrapper — no mechanical work.
-export function createMyTool() {
+// The factory accepts an injectable rng (defaulting to Math.random) and
+// threads it through every pure-function call. See "RNG threading" below.
+export function createMyTool(rng: () => number = Math.random) {
   return tool(
     "tool_name",
     "Description of WHEN the facilitator should call this — narrative trigger.",
@@ -188,7 +190,7 @@ export function createMyTool() {
       optionalParam: z.number().optional().describe("Optional"),
     },
     async (args) => {
-      const result = myToolPure(args);
+      const result = myToolPure(args, rng);
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result) }],
         structuredContent: result,
@@ -198,6 +200,24 @@ export function createMyTool() {
   );
 }
 ```
+
+For stateful tools that take stores, the rng parameter goes alongside them, last:
+
+```ts
+export function createMyStatefulTool(
+  steps: StepStore,
+  session: SessionStore,
+  rng: () => number = Math.random
+) { /* ... */ }
+```
+
+### RNG threading and handler determinism
+
+Every function that does RNG-dependent work — pure function, step function, factory — accepts an optional `rng: () => number = Math.random` parameter and threads it through every primitive call inside. Three call sites, one convention.
+
+Why it matters: the validator writes *handler-integration tests* for any tool whose handler mutates session state (see \`testing-reference.md#handler-integration-tests\`). Without an injectable rng on the factory, the handler always uses Math.random and the test can't force specific branches deterministically — so handler-side state writes (where wrong-signature / wrong-(entity,key) / missing-persistence bugs hide) become untestable. Threading rng through the factory closes that gap.
+
+At runtime, server.ts builds tools without passing rng, so they default to Math.random — no behavioural change for play. At test time, the validator passes \`seededRng(42)\` (or similar) to force deterministic outcomes.
 
 ### Dual-channel output
 
@@ -234,6 +254,8 @@ export function createGameServer() {
 ```
 
 Only create a `SessionStore` if the game actually tracks persistent mechanical state. Only create an `InMemoryStepStore` if a tool is pausable. Don't over-provision.
+
+`server.ts` does not pass an `rng` to factories — they default to `Math.random` at runtime, which is what we want for play. The injectable rng exists for the validator's handler-integration tests, not the runtime path.
 
 ---
 
@@ -304,8 +326,13 @@ export function blackjackStep(
 
 ### Handler shape
 
+The factory accepts the same rng convention as one-shot tools (see [RNG threading](#rng-threading-and-handler-determinism)). Pausable handlers must thread rng into every step-function call — the step function may consume rng on any phase, not just `start`.
+
 ```ts
-export function createBlackjack(store: StepStore) {
+export function createBlackjack(
+  store: StepStore,
+  rng: () => number = Math.random
+) {
   return tool(
     "resolve_blackjack",
     "Drive one blackjack round. Call with phase='start' to deal. If the " +
@@ -327,7 +354,7 @@ export function createBlackjack(store: StepStore) {
         ? { kind: "start" }
         : { kind: args.action! };
 
-      const step = blackjackStep(prev, input);
+      const step = blackjackStep(prev, input, rng);
 
       if (step.kind === "awaiting") {
         await store.put(args.stepId, step.state);
