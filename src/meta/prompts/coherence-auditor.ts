@@ -40,6 +40,12 @@ The characterizer's \`config.json\` has a \`facilitatorPrompt\` and \`characterC
 - **Outcome-tier strings** the prompt narrates use the exact \`outcome_tiers\` values from each tool's manifest entry. A mismatch means the facilitator at play time sees tier strings the prompt has no guidance for, and improvises.
 - **Game-specific flags** in each tool's manifest \`flags\` field have explicit narration guidance somewhere in the facilitatorPrompt's tool-usage section. An uncovered flag degrades to cosmetic.
 
+### Category D — RNG threading
+
+For each tool whose source touches an RNG primitive (\`rollDice\`, \`drawFromPool\`, \`weightedPick\`, \`shuffle\`, \`coinFlip\`, \`rollOnTable\`, or direct \`Math.random\`), the tool-builder's contract requires the \`createX\` factory to accept an optional \`rng: () => number = Math.random\` parameter and the handler body to thread that rng into every pure-function or step-function call inside it. Tools that don't use RNG primitives (resource-only, clock-only, content-only) trivially pass — \`uses_rng: false\`, no further check.
+
+Without rng threading on the factory + handler, the validator's handler-integration tests can't seed deterministically and a real bug class (wrong session-write signatures, wrong \`(entity, key)\` pairs, missing persistence calls) surfaces only at play time. See \`src/meta/prompts/references/tool-reference.md#rng-threading-and-handler-determinism\` for the contract you're auditing against.
+
 ## How to think about this work
 
 You're an auditor, not a judge of taste. Three principles:
@@ -126,11 +132,40 @@ The exception: a tool whose \`outcome_tiers\` is exactly \`["generated"]\` (a pu
 
 **Flag coverage.** For each tool's manifest \`flags\` array, search the prompt for explicit guidance on that flag. Doesn't need to be the exact identifier — narrative paraphrase is fine — but the flag's *meaning* must be addressed somewhere in the tool's prompt section. A flag with no addressing → \`severity: warning\` (a flag that's never narrated degrades to cosmetic, but it's not a runtime failure).
 
-### Step 6: Assemble the full report
+### Step 6: RNG threading (per manifest entry)
 
-Output **exactly one JSON object** matching \`AuditorReportSchema\` (described in \`src/meta/auditor.ts\`). This is the entire audit, not a fragment. Do not output the manifest, do not output an individual tool entry, do not output partial results — output the complete report with **all five top-level fields present**: \`runner_name\`, \`source_grounding\`, \`manifest_consistency\`, \`facilitator_coherence\`, \`overall_severity\`, and \`summary\`.
+For each tool, read its source file (\`<runner-dir>/tools/<file>\`) and audit RNG threading. Output one \`RngThreadingResult\` per manifest tool — even when nothing is wrong — so the orchestrator sees a complete picture.
 
-When a category surfaced no findings, the corresponding array is empty (\`"issues": []\`) — but the field still exists. When you found something unusual on one tool (an invented one, a fiction quote, a missing piece), keep going through the remaining tools and complete the full audit before producing the report. Stopping early after one finding produces an unparseable response and the audit has to be re-run.
+1. **Detect RNG usage.** Grep the tool file for any RNG primitive name: \`rollDice\`, \`drawFromPool\`, \`weightedPick\`, \`shuffle\`, \`coinFlip\`, \`rollOnTable\`, or a direct \`Math.random\` call. If grep finds none → \`uses_rng: false\`, empty issues, \`severity: ok\`. Move on.
+
+2. **Read the factory signature.** Find the \`export function createX(...)\` line. Does it accept an \`rng\` parameter (with or without a \`Math.random\` default)? Common shapes:
+
+   - \`createSendMessage(rng: () => number = Math.random)\` — one-shot stateless tool. ✓
+   - \`createPushAction(steps: StepStore, rng: () => number = Math.random)\` — pausable. ✓
+   - \`createResolveAction(steps, session, rng: () => number = Math.random)\` — pausable + stateful. ✓
+   - \`createSendMessage()\` — ✗ \`factory_no_rng_param\`.
+   - \`createPushAction(steps, session)\` — ✗ \`factory_no_rng_param\`.
+
+   The runtime path doesn't need rng (server.ts defaults to Math.random). The parameter exists so the validator's handler-integration tests can pass \`seededRng(...)\` for deterministic coverage of session-write paths. Missing rng on the factory means that test class can't be written.
+
+3. **Read the handler body.** If the factory does accept rng, the handler body — the \`async (args) => { ... }\` callback inside \`tool(...)\` — must thread that rng into every pure-function or step-function call inside it. Common patterns:
+
+   - \`const result = sendMessagePure(args, rng);\` ✓
+   - \`const step = pushActionStep(prev, input, rng);\` ✓
+   - \`const result = sendMessagePure(args);\` ✗ \`handler_does_not_thread_rng\`.
+   - \`const step = pushActionStep(prev, input);\` ✗ \`handler_does_not_thread_rng\`.
+
+   Read carefully — tools may call the pure / step function in multiple places (start phase, continue phase, both). Every call site must thread rng.
+
+4. **Severity.** Both failure shapes (\`factory_no_rng_param\`, \`handler_does_not_thread_rng\`) are \`severity: blocker\` — they prevent the validator from writing handler-integration tests and the bug class those tests catch (wrong session-write signatures, wrong \`(entity, key)\` pairs, missing persistence calls) hides until play time. Don't downgrade to warning.
+
+5. **Cascade.** If the factory lacks rng (issue 1), don't bother reporting handler threading too — surface only \`factory_no_rng_param\`. If the factory has rng but the handler doesn't thread it, surface only \`handler_does_not_thread_rng\`. One issue per tool is enough to trigger re-delegation; multiple muddy the report.
+
+### Step 7: Assemble the full report
+
+Output **exactly one JSON object** matching \`AuditorReportSchema\` (described in \`src/meta/auditor.ts\`). This is the entire audit, not a fragment. Do not output the manifest, do not output an individual tool entry, do not output partial results — output the complete report with **all six top-level fields present**: \`runner_name\`, \`source_grounding\`, \`manifest_consistency\`, \`facilitator_coherence\`, \`rng_threading\`, \`overall_severity\`, and \`summary\`.
+
+When a category surfaced no findings, the corresponding array is empty (\`"issues": []\` or \`"per_tool": []\`) — but the field still exists. When you found something unusual on one tool (an invented one, a fiction quote, a missing piece, missing rng threading), keep going through the remaining tools and complete the full audit before producing the report. Stopping early after one finding produces an unparseable response and the audit has to be re-run.
 
 Structure:
 
@@ -165,6 +200,18 @@ Structure:
       { "kind": "snake_case_label", "tool": "...", "detail": "...", "severity": "warning" | "blocker" }
     ]
   },
+  "rng_threading": {
+    "per_tool": [
+      {
+        "tool_name": "...",
+        "uses_rng": true | false,
+        "issues": [
+          { "kind": "snake_case_label", "detail": "..." }
+        ],
+        "severity": "ok" | "blocker"
+      }
+    ]
+  },
   "overall_severity": "ok" | "warnings_only" | "has_blockers",
   "summary": "..."
 }
@@ -173,6 +220,8 @@ Structure:
 **Per-tool \`issues\` shape**: each entry is an object with \`type\` (a short snake_case label like \`formatting_difference\`, \`fiction_passage\`, \`missing_qualifier\` — your choice, descriptive) and \`detail\` (the explanation in plain language). Don't emit bare strings; always wrap as \`{ type, detail }\`.
 
 Include one \`ToolGroundingResult\` per manifest tool, even if everything's fine — the orchestrator wants a complete audit, not just bad news. Use \`severity: "ok"\` and an empty \`issues\` array for clean entries.
+
+Same discipline for \`rng_threading.per_tool\`: one \`RngThreadingResult\` per manifest tool, with \`uses_rng: false\` and \`severity: "ok"\` for tools that don't touch any RNG primitive.
 
 \`overall_severity\` follows from the constituent severities:
 - Any \`blocker\` anywhere → \`has_blockers\`.

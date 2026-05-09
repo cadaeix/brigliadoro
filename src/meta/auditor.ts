@@ -204,6 +204,88 @@ export type ManifestConsistencyIssue = z.infer<
 >;
 
 /**
+ * A single rng-threading observation about a tool whose source touches
+ * an RNG primitive. The convention: the pure function (or step function),
+ * the `createX` factory, and the handler-body call sites must all thread
+ * an injectable `rng: () => number = Math.random` parameter so the
+ * validator's handler-integration tests can seed the handler
+ * deterministically. See `tool-reference.md#rng-threading-and-handler-determinism`
+ * for the full contract.
+ *
+ * `kind` is a free-form snake_case label (same discipline as the other
+ * issue schemas). Common values:
+ *   - `factory_no_rng_param` — `createX(...)` doesn't accept the rng
+ *     parameter. Without it, handler-integration tests can't seed.
+ *   - `handler_does_not_thread_rng` — factory accepts rng, but the
+ *     handler body calls the pure / step function without passing it.
+ *     Silent failure: the code looks fine, tests pass vacuously.
+ *
+ * Free-form rather than strict-enum because the auditor is a Haiku agent
+ * whose natural labels vary; routing happens on `severity`, not on the
+ * exact `kind` string.
+ */
+export const RngThreadingIssueSchema = z.object({
+  kind: z
+    .string()
+    .min(1)
+    .describe(
+      "Short snake_case label. Common values: " +
+        "'factory_no_rng_param' (createX doesn't accept rng), " +
+        "'handler_does_not_thread_rng' (factory accepts rng but the " +
+        "handler body doesn't pass it to its pure-function or " +
+        "step-function call sites)."
+    ),
+  detail: z
+    .string()
+    .min(1)
+    .describe(
+      "What's missing and where. Name the call site or signature when " +
+        "you can — 'createPushAction signature is (steps, session); rng " +
+        "missing'; 'handler calls pushActionStep(prev, input) without " +
+        "threading rng on line 42'."
+    ),
+});
+export type RngThreadingIssue = z.infer<typeof RngThreadingIssueSchema>;
+
+/**
+ * Per-tool rng-threading finding. One entry per manifest tool, even if
+ * the tool doesn't use RNG (`uses_rng: false`, empty issues, severity ok)
+ * — gives the orchestrator a complete picture rather than only-bad-news.
+ *
+ * Severity rules:
+ *   - `uses_rng: false` → `ok` always.
+ *   - `uses_rng: true`, no issues → `ok`.
+ *   - `uses_rng: true`, any threading issue → `blocker`. Both failure
+ *     shapes (`factory_no_rng_param`, `handler_does_not_thread_rng`)
+ *     prevent handler-integration tests from running deterministically,
+ *     and the bug class they hide (wrong session-write signatures /
+ *     wrong (entity, key) pairs / missing persistence calls) surfaces
+ *     only at play time.
+ */
+export const RngThreadingResultSchema = z.object({
+  tool_name: z
+    .string()
+    .min(1)
+    .describe("MCP tool name from the manifest."),
+  uses_rng: z
+    .boolean()
+    .describe(
+      "Whether the tool's source touches any RNG primitive (rollDice, " +
+        "drawFromPool, weightedPick, shuffle, coinFlip, rollOnTable) " +
+        "or a direct Math.random call. False for tools that only do " +
+        "resource / clock / content operations — they trivially pass."
+    ),
+  issues: z
+    .array(RngThreadingIssueSchema)
+    .describe(
+      "Empty when uses_rng is false OR when threading is correct. " +
+        "Otherwise one entry per missing piece."
+    ),
+  severity: SeveritySchema,
+});
+export type RngThreadingResult = z.infer<typeof RngThreadingResultSchema>;
+
+/**
  * Issues the auditor finds when reading `config.json` and cross-checking
  * the characterizer's prompt against the manifest. These route to the
  * characterizer for fixes, not the tool-builder.
@@ -266,6 +348,9 @@ export const AuditorReportSchema = z.object({
   facilitator_coherence: z.object({
     issues: z.array(FacilitatorCoherenceIssueSchema),
   }),
+  rng_threading: z.object({
+    per_tool: z.array(RngThreadingResultSchema),
+  }),
   overall_severity: z
     .enum(["ok", "warnings_only", "has_blockers"])
     .describe(
@@ -322,7 +407,10 @@ export function parseAuditorReport(
 export function computeOverallSeverity(
   report: Pick<
     AuditorReport,
-    "source_grounding" | "manifest_consistency" | "facilitator_coherence"
+    | "source_grounding"
+    | "manifest_consistency"
+    | "facilitator_coherence"
+    | "rng_threading"
   >
 ): "ok" | "warnings_only" | "has_blockers" {
   const allFindings: Array<{ severity: Severity }> = [
@@ -332,6 +420,7 @@ export function computeOverallSeverity(
     })),
     ...report.manifest_consistency.issues,
     ...report.facilitator_coherence.issues,
+    ...report.rng_threading.per_tool,
   ];
   if (allFindings.some((f) => f.severity === "blocker")) {
     return "has_blockers";

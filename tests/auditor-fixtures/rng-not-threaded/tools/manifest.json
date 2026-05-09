@@ -1,0 +1,40 @@
+{
+  "game_name": "The Cipher",
+  "version": 1,
+  "tools": [
+    {
+      "name": "send_message",
+      "file": "send-message.ts",
+      "description": "Roll when a correspondent writes and sends a letter. The fiction trigger is the act of writing — once written and committed to the post, call this tool to determine whether the letter arrives clear, garbled, or lost. Reads the high die of 2d6 to determine outcome; matching dice break the cipher.",
+      "params": {
+        "sender_name": "Name of the correspondent sending the letter."
+      },
+      "outcome_tiers": ["clear", "garbled", "lost"],
+      "flags": ["cipher_broken"],
+      "shape": "one-shot",
+      "resources_emitted": [],
+      "resources_consumed": [],
+      "source_ref": {
+        "summary": "The core resolution roll — 2d6, read high die. 6 = clear, 4-5 = garbled, 2-3 = lost. Matching dice (any pair) break the cipher.",
+        "quote": "Each turn, one player writes their letter and rolls 2d6. Read the high die. - **6: Clear** — the letter arrives. The recipient reads it as written. - **4 or 5: Garbled** — the letter arrives, but parts are missing, smudged, or transposed. The reader picks one phrase and treats it as illegible. - **2 or 3: Lost** — the letter never arrives. The recipient writes back into the silence. If both dice match (two ones, two fives, two sixes, any pair), **the cipher is broken**.",
+        "page_or_section": "Sending"
+      }
+    },
+    {
+      "name": "roll_complication",
+      "file": "roll-complication.ts",
+      "description": "Roll when a letter arrives, before its contents are read. Generates a complication — something interfering with the message. Rolled on receipt, not on send.",
+      "params": {},
+      "outcome_tiers": ["generated"],
+      "flags": [],
+      "shape": "one-shot",
+      "resources_emitted": [],
+      "resources_consumed": [],
+      "source_ref": {
+        "summary": "A d6 random table of complications that interfere with arriving letters. Rolled before reading.",
+        "quote": "When the letter arrives, before reading, roll d6 on the complications table: 1. The post was searched. The seal is wrong; someone has read this first. 2. The letter is months late. What it describes is no longer true. 3. The handwriting is not your correspondent's. Someone is replying for them. 4. There is a second letter in the envelope, addressed to you, signed by no-one. 5. The paper is from a place neither of you have been. 6. No complication. The letter arrives as it left.",
+        "page_or_section": "Complications"
+      }
+    }
+  ]
+}

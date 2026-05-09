@@ -56,6 +56,17 @@ describe("coherence auditor — fixture suite", () => {
         (i) => i.severity === "blocker"
       );
       expect(coherenceBlockers).toHaveLength(0);
+
+      // RNG-threading clean. Every manifest tool produces an entry; the
+      // clean fixture's stub tool sources don't import any RNG primitive,
+      // so every entry should be uses_rng: false / severity: ok.
+      expect(
+        report.rng_threading.per_tool.length
+      ).toBeGreaterThanOrEqual(2);
+      for (const tool of report.rng_threading.per_tool) {
+        expect(tool.severity).toBe("ok");
+        expect(tool.issues).toHaveLength(0);
+      }
     },
     PER_TEST_TIMEOUT_MS
   );
@@ -165,6 +176,36 @@ describe("coherence auditor — fixture suite", () => {
       expect(invented, "expected per_tool entry for track_emotional_distance").toBeDefined();
       expect(invented!.quote_status).toBe("empty");
       expect(invented!.severity).toBe("blocker");
+    },
+    PER_TEST_TIMEOUT_MS
+  );
+
+  it(
+    "rng-not-threaded fixture: send_message factory lacks rng, roll_complication threads correctly",
+    async () => {
+      const report = await auditFixture("rng-not-threaded");
+      expect(report.overall_severity).toBe("has_blockers");
+
+      // Both tools should produce rng_threading entries.
+      expect(report.rng_threading.per_tool.length).toBeGreaterThanOrEqual(2);
+
+      // send_message: bug case — factory doesn't accept rng.
+      const broken = report.rng_threading.per_tool.find(
+        (t) => t.tool_name === "send_message"
+      );
+      expect(broken, "expected rng_threading entry for send_message").toBeDefined();
+      expect(broken!.uses_rng).toBe(true);
+      expect(broken!.severity).toBe("blocker");
+      expect(broken!.issues.length).toBeGreaterThanOrEqual(1);
+
+      // roll_complication: positive case — threads rng correctly.
+      const ok = report.rng_threading.per_tool.find(
+        (t) => t.tool_name === "roll_complication"
+      );
+      expect(ok, "expected rng_threading entry for roll_complication").toBeDefined();
+      expect(ok!.uses_rng).toBe(true);
+      expect(ok!.severity).toBe("ok");
+      expect(ok!.issues).toHaveLength(0);
     },
     PER_TEST_TIMEOUT_MS
   );
