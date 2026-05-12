@@ -25,6 +25,14 @@
  * Writes are append-only and per-chunk flushed so ctrl+C never loses
  * what happened. Tool call results are NOT captured — too verbose;
  * the indicator line is enough for reading + debugging.
+ *
+ * A second "player-view" file is written in parallel at
+ * `state/transcripts/<shortid>.player-view.md` containing only the
+ * facilitator narration and player inputs — no tool indicators, no
+ * tool results, no `<!-- subagent:* -->` blocks. This is the file an
+ * external player harness (e.g. brigliadoro-roland) feeds into a
+ * Claude player session, so the player only sees what a human player
+ * would see.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -59,9 +67,8 @@ export interface TranscriptWriter {
    *  awaiting marker can include it for external drivers. */
   currentTranscriptPath(): string | null;
   /** Current absolute path of the player-view side transcript (clean
-   *  facilitator-prose-only view for external player agents). Phase-2
-   *  writes to this file; Phase-1 only exposes the path. Returns null
-   *  before the session file is opened. */
+   *  facilitator-prose-only view for external player agents). Returns
+   *  null before the session file is opened. */
   currentPlayerViewPath(): string | null;
   /** Emit a turn-boundary marker to stdout for external drivers (e.g. an
    *  LLM-player harness). Should be called immediately before
@@ -76,8 +83,15 @@ export function createTranscriptWriter(stateDir: string): TranscriptWriter {
   let gameName = "TTRPG Runner";
   let mode: SessionMode = "initial";
   let seedLabel: string | undefined;
+
+  // Main transcript: everything (facilitator, player, tool calls, subagent
+  // summaries). Player view: only facilitator narration + player inputs.
+  // Both files share the same header and are opened together once the
+  // session id is known.
   let filePath: string | null = null;
+  let playerViewPath: string | null = null;
   let pending: string[] = [];
+  let playerViewPending: string[] = [];
 
   function write(chunk: string): void {
     if (filePath) {
@@ -87,10 +101,27 @@ export function createTranscriptWriter(stateDir: string): TranscriptWriter {
     }
   }
 
+  function writePlayerView(chunk: string): void {
+    if (playerViewPath) {
+      fs.appendFileSync(playerViewPath, chunk);
+    } else {
+      playerViewPending.push(chunk);
+    }
+  }
+
+  function writeBoth(chunk: string): void {
+    write(chunk);
+    writePlayerView(chunk);
+  }
+
   function flushPending(): void {
     if (filePath && pending.length > 0) {
       fs.appendFileSync(filePath, pending.join(""));
       pending = [];
+    }
+    if (playerViewPath && playerViewPending.length > 0) {
+      fs.appendFileSync(playerViewPath, playerViewPending.join(""));
+      playerViewPending = [];
     }
   }
 
@@ -128,32 +159,59 @@ export function createTranscriptWriter(stateDir: string): TranscriptWriter {
     return transcriptPath.replace(/\.md$/, ".player-view.md");
   }
 
-  function openFileFor(sessionId: string): string {
+  function buildNewSessionHeader(sessionId: string, now: string): string {
+    const seedLine = seedLabel ? `- **Seed mode**: \`${seedLabel}\`\n` : "";
+    return (
+      `# ${gameName}\n\n` +
+      `- **Session**: \`${sessionId}\`\n` +
+      `- **Started**: ${now}\n` +
+      seedLine +
+      `\n---\n\n`
+    );
+  }
+
+  function buildResumeBanner(now: string): string {
+    const seedLine = seedLabel ? ` (seed mode: \`${seedLabel}\`)` : "";
+    return `\n---\n\n## Session resumed — ${now}${seedLine}\n\n`;
+  }
+
+  function buildFreshSessionBanner(now: string): string {
+    const seedLine = seedLabel ? ` (seed mode: \`${seedLabel}\`)` : "";
+    return `\n---\n\n## Fresh session in existing world — ${now}${seedLine}\n\n`;
+  }
+
+  /** Open both the main transcript and the player-view file for this
+   *  session id. They share a header (or resume / fresh-session banner)
+   *  so the player-view reads as a parallel record of the same session. */
+  function openFilesFor(sessionId: string): { main: string; playerView: string } {
     fs.mkdirSync(transcriptsDir, { recursive: true });
-    const p = path.join(transcriptsDir, `${shortId(sessionId)}.md`);
-    const exists = fs.existsSync(p);
+    const main = path.join(transcriptsDir, `${shortId(sessionId)}.md`);
+    const playerView = playerViewPathFor(main);
+    const mainExists = fs.existsSync(main);
+    const playerViewExists = fs.existsSync(playerView);
     const now = new Date().toISOString();
 
-    if (!exists) {
-      const seedLine = seedLabel ? `- **Seed mode**: \`${seedLabel}\`\n` : "";
-      const header =
-        `# ${gameName}\n\n` +
-        `- **Session**: \`${sessionId}\`\n` +
-        `- **Started**: ${now}\n` +
-        seedLine +
-        `\n---\n\n`;
-      fs.writeFileSync(p, header);
+    if (!mainExists) {
+      fs.writeFileSync(main, buildNewSessionHeader(sessionId, now));
     } else if (mode === "resume") {
-      const seedLine = seedLabel ? ` (seed mode: \`${seedLabel}\`)` : "";
-      fs.appendFileSync(p, `\n---\n\n## Session resumed — ${now}${seedLine}\n\n`);
+      fs.appendFileSync(main, buildResumeBanner(now));
     } else if (mode === "fresh-session") {
-      const seedLine = seedLabel ? ` (seed mode: \`${seedLabel}\`)` : "";
-      fs.appendFileSync(
-        p,
-        `\n---\n\n## Fresh session in existing world — ${now}${seedLine}\n\n`
-      );
+      fs.appendFileSync(main, buildFreshSessionBanner(now));
     }
-    return p;
+
+    // The player-view header mirrors the main header (and resume / fresh
+    // banners) so the two read in parallel. New-file initialization is
+    // independent of the main file in case a previous run wrote one but
+    // not the other (e.g. crash between writes).
+    if (!playerViewExists) {
+      fs.writeFileSync(playerView, buildNewSessionHeader(sessionId, now));
+    } else if (mode === "resume") {
+      fs.appendFileSync(playerView, buildResumeBanner(now));
+    } else if (mode === "fresh-session") {
+      fs.appendFileSync(playerView, buildFreshSessionBanner(now));
+    }
+
+    return { main, playerView };
   }
 
   return {
@@ -167,14 +225,18 @@ export function createTranscriptWriter(stateDir: string): TranscriptWriter {
         .split("\n")
         .map((line) => `> ${line}`)
         .join("\n");
-      write(`\n${quoted}\n\n`);
+      // Player input goes to both files — the player-view needs the
+      // player's own line for context (so a player agent reading the
+      // file sees its own prior turn echoed).
+      writeBoth(`\n${quoted}\n\n`);
     },
     recordFacilitatorChunk(chunk) {
-      write(chunk);
+      // Facilitator narration is the whole point of the player-view.
+      writeBoth(chunk);
     },
     recordToolCall(name, hint) {
-      // No trailing newline-pair — the result line will append on the next
-      // line below this one, then add its own spacing.
+      // Main only — tool indicators are mechanical noise an external
+      // player agent shouldn't see (a human player wouldn't).
       write(`\n  ↪ ${name}${hint}\n`);
     },
     recordToolResult(_name, resultText) {
@@ -192,6 +254,8 @@ export function createTranscriptWriter(stateDir: string): TranscriptWriter {
       const max = 500;
       const truncated =
         rendered.length > max ? rendered.slice(0, max) + "…" : rendered;
+      // Main only — tool results are the deepest layer of mechanical
+      // detail; never visible to a player.
       write(`  ← ${truncated}\n\n`);
     },
     recordSubagentSummary(subagent, toolCalls, summary) {
@@ -206,24 +270,30 @@ export function createTranscriptWriter(stateDir: string): TranscriptWriter {
         if (trimmed) lines.push(`  > ${trimmed.slice(0, 200)}`);
       }
       lines.push("");
+      // Main only — bookkeeper / future-specialist activity is bookkeeping,
+      // not narrative.
       write(lines.join("\n"));
     },
     endFacilitatorTurn(sessionId) {
       if (!filePath && sessionId) {
-        filePath = openFileFor(sessionId);
+        const opened = openFilesFor(sessionId);
+        filePath = opened.main;
+        playerViewPath = opened.playerView;
         flushPending();
       }
-      write("\n");
+      writeBoth("\n");
     },
     resetForNewSession() {
       filePath = null;
+      playerViewPath = null;
       pending = [];
+      playerViewPending = [];
     },
     currentTranscriptPath() {
       return filePath;
     },
     currentPlayerViewPath() {
-      return filePath ? playerViewPathFor(filePath) : null;
+      return playerViewPath;
     },
     emitAwaitingMarker() {
       // External drivers (e.g. an LLM-player harness) parse this marker
@@ -233,14 +303,12 @@ export function createTranscriptWriter(stateDir: string): TranscriptWriter {
       // (first prompt of a session, before the first facilitator turn has
       // generated one); harnesses must handle this case by reading the
       // opening message from stdout buffer instead of from file.
-      const transcriptPath = filePath;
-      if (transcriptPath === null) {
+      if (filePath === null || playerViewPath === null) {
         process.stdout.write("<<<BRIGLIADORO-AWAITING>>>\n");
         return;
       }
-      const playerView = playerViewPathFor(transcriptPath);
       process.stdout.write(
-        `<<<BRIGLIADORO-AWAITING transcript=${transcriptPath} player-view=${playerView}>>>\n`
+        `<<<BRIGLIADORO-AWAITING transcript=${filePath} player-view=${playerViewPath}>>>\n`
       );
     },
   };
