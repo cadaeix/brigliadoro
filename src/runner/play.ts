@@ -434,6 +434,11 @@ async function main() {
 
   // ── Unified turn loop ──────────────────────────────────────────────────
   while (true) {
+    // Emit a turn-boundary marker to stdout for external drivers (e.g.
+    // an LLM-player harness driving via --player-script-tail). Carries
+    // the live transcript paths so the driver can read the player-view
+    // file directly. Always-on; harmless in stdin / one-shot script modes.
+    transcript.emitAwaitingMarker();
     const input = await playerSource.prompt("\n> ");
     const trimmed = input.trim();
     const lower = trimmed.toLowerCase();

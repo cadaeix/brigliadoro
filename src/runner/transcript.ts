@@ -54,6 +54,21 @@ export interface TranscriptWriter {
   endFacilitatorTurn(sessionId: string): void;
   /** Reset state for a new transcript (e.g. /new, /new-session). */
   resetForNewSession(): void;
+  /** Current absolute path of the main transcript file, or null if the
+   *  file hasn't been opened yet (no sessionId known). Exposed so the
+   *  awaiting marker can include it for external drivers. */
+  currentTranscriptPath(): string | null;
+  /** Current absolute path of the player-view side transcript (clean
+   *  facilitator-prose-only view for external player agents). Phase-2
+   *  writes to this file; Phase-1 only exposes the path. Returns null
+   *  before the session file is opened. */
+  currentPlayerViewPath(): string | null;
+  /** Emit a turn-boundary marker to stdout for external drivers (e.g. an
+   *  LLM-player harness). Should be called immediately before
+   *  `playerSource.prompt()` at every prompt site. The marker carries
+   *  the transcript paths when known; emits a bare marker when the
+   *  session id isn't yet established (very first prompt of a session). */
+  emitAwaitingMarker(): void;
 }
 
 export function createTranscriptWriter(stateDir: string): TranscriptWriter {
@@ -104,6 +119,13 @@ export function createTranscriptWriter(stateDir: string): TranscriptWriter {
   function shortId(sessionId: string): string {
     const cleaned = sessionId.replace(/[^a-zA-Z0-9]/g, "");
     return cleaned.slice(0, 8) || "unknown";
+  }
+
+  function playerViewPathFor(transcriptPath: string): string {
+    // Mirror the transcript path with a `.player-view.md` suffix so the
+    // two files sit next to each other in the same directory and share
+    // a discoverable naming convention.
+    return transcriptPath.replace(/\.md$/, ".player-view.md");
   }
 
   function openFileFor(sessionId: string): string {
@@ -196,6 +218,30 @@ export function createTranscriptWriter(stateDir: string): TranscriptWriter {
     resetForNewSession() {
       filePath = null;
       pending = [];
+    },
+    currentTranscriptPath() {
+      return filePath;
+    },
+    currentPlayerViewPath() {
+      return filePath ? playerViewPathFor(filePath) : null;
+    },
+    emitAwaitingMarker() {
+      // External drivers (e.g. an LLM-player harness) parse this marker
+      // on stdout to detect when it's the player's turn. Format is
+      // designed for simple regex parsing — key=value pairs space-separated.
+      // Bare marker (no kwargs) is emitted before the session id is known
+      // (first prompt of a session, before the first facilitator turn has
+      // generated one); harnesses must handle this case by reading the
+      // opening message from stdout buffer instead of from file.
+      const transcriptPath = filePath;
+      if (transcriptPath === null) {
+        process.stdout.write("<<<BRIGLIADORO-AWAITING>>>\n");
+        return;
+      }
+      const playerView = playerViewPathFor(transcriptPath);
+      process.stdout.write(
+        `<<<BRIGLIADORO-AWAITING transcript=${transcriptPath} player-view=${playerView}>>>\n`
+      );
     },
   };
 }

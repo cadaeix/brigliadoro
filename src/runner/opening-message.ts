@@ -59,6 +59,7 @@ export async function presentOpeningMessage(
 
   console.log(`\n${openingMessage}\n`);
   transcript.recordFacilitatorChunk(openingMessage + "\n");
+  transcript.emitAwaitingMarker();
   const userInput = await playerSource.prompt("\n> ");
   const trimmed = userInput.trim();
   if (trimmed.toLowerCase() === "/quit") {
