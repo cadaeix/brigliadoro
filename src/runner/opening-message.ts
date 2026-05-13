@@ -26,6 +26,7 @@ import type { TranscriptWriter } from "./transcript.js";
 export type OpeningMessageOutcome =
   | { kind: "no-opening" }
   | { kind: "quit" }
+  | { kind: "new-command" }
   | { kind: "responded"; text: string };
 
 export interface PresentOpeningMessageOptions {
@@ -45,11 +46,23 @@ export interface PresentOpeningMessageOptions {
  *   - `quit` — player typed `/quit` before responding. Caller is
  *     responsible for any cleanup (await pending bookkeeper, close
  *     player source, etc.) and for printing the closing banner.
- *   - `responded` — player gave a non-quit response. Caller threads
+ *   - `new-command` — player typed `/new` at the opening prompt. The
+ *     caller should wipe state and re-show the opening (a do-over
+ *     before the player has committed any turns). Intercepted here
+ *     because otherwise the runtime would pass `"/new"` to the LLM as
+ *     the player's first response — the LLM has no special handling
+ *     for that string, sees it as a normal input via `buildInitialPrompt`
+ *     framing ("their first response was: /new"), and produces a
+ *     meta-narrative reply ("alright, let's start fresh") instead of
+ *     the player getting a clean do-over. The same trap exists for
+ *     /quit and we already intercept it; /new gets the same treatment.
+ *   - `responded` — player gave a non-command response. Caller threads
  *     `text` into `buildInitialPrompt` so the agent picks up from there.
  *
  * The opening line is mirrored to the transcript as a facilitator chunk;
  * the player's response (when any) is mirrored as a player input.
+ * Command outcomes (/quit, /new) are NOT mirrored as player inputs —
+ * they're user-side meta-actions, not turns the agent sees.
  */
 export async function presentOpeningMessage(
   opts: PresentOpeningMessageOptions
@@ -62,8 +75,12 @@ export async function presentOpeningMessage(
   transcript.emitAwaitingMarker();
   const userInput = await playerSource.prompt("\n> ");
   const trimmed = userInput.trim();
-  if (trimmed.toLowerCase() === "/quit") {
+  const lower = trimmed.toLowerCase();
+  if (lower === "/quit") {
     return { kind: "quit" };
+  }
+  if (lower === "/new") {
+    return { kind: "new-command" };
   }
   transcript.recordPlayerInput(trimmed);
   return { kind: "responded", text: trimmed };

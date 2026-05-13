@@ -402,6 +402,58 @@ async function main() {
     seedLabel: seedModeLabel,
   });
 
+  /**
+   * Show the opening message and loop on `/new`-at-the-opening-prompt
+   * commands. When the player types `/new` before answering the
+   * opening's questions, wipe state and re-show the opening — a clean
+   * do-over rather than passing `"/new"` to the LLM as the first
+   * response (which would produce a meta-narrative "let's start fresh"
+   * reply instead of a genuine restart).
+   *
+   * Used at initial-mode startup AND in the runtime `/new` handler —
+   * both places need the same loop, because in either place the player
+   * can type `/new` at the opening prompt expecting a do-over.
+   *
+   * Returns:
+   *   - `"quit"` — player typed /quit; caller should close and exit
+   *   - `"no-opening"` — no openingMessage was configured
+   *   - `"responded"` with the player's text — caller threads through
+   *     buildInitialPrompt and the first LLM turn
+   */
+  async function showOpeningWithNewCommandLoop(): Promise<
+    | { kind: "quit" }
+    | { kind: "no-opening" }
+    | { kind: "responded"; text: string }
+  > {
+    while (true) {
+      const outcome = await presentOpeningMessage({
+        openingMessage,
+        playerSource,
+        transcript,
+      });
+      if (outcome.kind !== "new-command") {
+        return outcome;
+      }
+      // /new at the opening prompt — wipe state, reset transcript +
+      // turnRunner, then loop back to re-show the opening. No
+      // confirmation needed: the player hasn't committed any turns
+      // yet, so there's nothing to lose. No LLM call.
+      await awaitPendingBookkeeper();
+      const removed = clearAllState(stateDir);
+      console.log(
+        `\n[Wiped: ${removed.length > 0 ? removed.join(", ") : "nothing to wipe"}]\n`
+      );
+      transcript.resetForNewSession();
+      transcript.beginSession({
+        gameName: config.name,
+        mode: "initial",
+        seedLabel: seedModeLabel,
+      });
+      turnNumber = 0;
+      turnRunner.resetSession();
+    }
+  }
+
   // In initial mode, show the pre-rendered opening (if configured) and
   // capture the player's first response before the agent's first call.
   // Saves an LLM call and ensures a consistent first impression in the
@@ -409,11 +461,7 @@ async function main() {
   // opening — the player has been here before.
   let firstPlayerResponseAfterOpening: string | undefined;
   if (firstMode === "initial") {
-    const opening = await presentOpeningMessage({
-      openingMessage,
-      playerSource,
-      transcript,
-    });
+    const opening = await showOpeningWithNewCommandLoop();
     if (opening.kind === "quit") {
       await playerSource.close();
       console.log("\n[Thanks for playing!]");
@@ -504,21 +552,16 @@ async function main() {
           mode: "initial",
           seedLabel: seedModeLabel,
         });
-        turnNumber = 1;
+        turnNumber = 0;
         turnRunner.resetSession();
 
         // Mirror the initial-mode openingMessage flow on /new — same
-        // shape as session launch: show the opening, wait for the
-        // player's first response, then call the LLM once with that
-        // response wrapped in `buildInitialPrompt` framing. No LLM call
-        // happens until the player has typed something; the "new game"
-        // framing is what makes the first turn coherent (the agent
-        // knows the player saw the opening and is responding to it).
-        const newRunOpening = await presentOpeningMessage({
-          openingMessage,
-          playerSource,
-          transcript,
-        });
+        // shape as session launch. Use the loop helper so the player
+        // can type `/new` again at the opening prompt for a fresh
+        // do-over without leaking `"/new"` to the LLM as their first
+        // response (the bug the original /new-at-the-opening report
+        // surfaced).
+        const newRunOpening = await showOpeningWithNewCommandLoop();
         if (newRunOpening.kind === "quit") {
           await awaitPendingBookkeeper();
           await playerSource.close();
@@ -536,6 +579,7 @@ async function main() {
           playerFirstResponse: newRunFirstResponse,
           playerPreferencesText,
         });
+        turnNumber += 1;
         const res = await turnRunner.runTurn({
           userPrompt: newRunInitialPrompt,
           playerInput: newRunFirstResponse,
