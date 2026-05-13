@@ -57,6 +57,13 @@ export interface TranscriptWriter {
    *  under a `<!-- subagent:<name> -->` marker. Indented to visually
    *  distinguish specialist work from facilitator narration. */
   recordSubagentSummary(subagent: string, toolCalls: Array<{ tool: string; args: unknown }>, summary?: string): void;
+  /** Record a Director failure (prose-leak / parse error) inline in the
+   *  main transcript under a `<!-- director-failure -->` marker so the
+   *  drift is visible alongside the degraded message rather than only
+   *  in `<shortid>.director.jsonl`. Main only — the player-view file
+   *  stays clean. `rawText` is truncated by the caller; this method
+   *  just renders it as a fenced block. */
+  recordDirectorFailure(error: string, rawText: string): void;
   /** Call at end of a facilitator turn. Opens the file on first call
    *  (once we have a sessionId) and flushes any buffered content. */
   endFacilitatorTurn(sessionId: string): void;
@@ -293,6 +300,25 @@ export function createTranscriptWriter(
       lines.push("");
       // Main only — bookkeeper / future-specialist activity is bookkeeping,
       // not narrative.
+      write(lines.join("\n"));
+    },
+    recordDirectorFailure(error, rawText) {
+      // Main only — the player-view file is for the player's "what
+      // happened in fiction" view; a Director parse error is operator
+      // diagnostic. Render as a fenced block so the leaked prose (often
+      // multi-line) stays legible in markdown viewers. Mirrors the
+      // shape of the subagent-summary block (HTML-comment marker +
+      // structured content) so they read consistently.
+      const lines: string[] = [
+        `\n<!-- director-failure -->`,
+        `- error: ${error.replace(/\s+/g, " ").trim().slice(0, 300)}`,
+        "- raw text below:",
+        "",
+        "```",
+        rawText.trim() || "(empty)",
+        "```",
+        "",
+      ];
       write(lines.join("\n"));
     },
     endFacilitatorTurn(sessionId) {

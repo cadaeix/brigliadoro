@@ -41,6 +41,10 @@ export interface NarratorRunOptions {
 export interface NarratorRunResult {
   prose: string;
   sessionId: string;
+  /** Wall-clock duration of the Narrator's `query()` call in ms. Used
+   *  by the director-trace JSONL so per-turn cost is visible across
+   *  Director + Narrator side-by-side. */
+  durationMs: number;
 }
 
 /**
@@ -78,6 +82,7 @@ export async function runNarrator(
 
   // tool_use blocks shouldn't appear (no tools), but if they do
   // `streamSdkQuery` silently ignores them — no `onToolUse` handler.
+  const startedAt = Date.now();
   const summary = await streamSdkQuery(
     query({ prompt: userMessage, options: queryOptions }),
     {
@@ -92,6 +97,7 @@ export async function runNarrator(
       },
     }
   );
+  const durationMs = Date.now() - startedAt;
 
   const prose = summary.text;
   const sessionId = summary.sessionId;
@@ -102,7 +108,7 @@ export async function runNarrator(
   }
   transcript.endFacilitatorTurn(sessionId);
 
-  return { prose, sessionId };
+  return { prose, sessionId, durationMs };
 }
 
 /**

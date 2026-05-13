@@ -18,6 +18,7 @@ import { createTranscriptWriter } from "./lib/runner/transcript.js";
 import { runBookkeeper } from "./lib/runner/bookkeeper.js";
 import type { BookSnapshot } from "./lib/runner/bookkeeper.js";
 import { createSubagentTrace } from "./lib/runner/subagent-trace.js";
+import { createDirectorTrace } from "./lib/runner/director-trace.js";
 import {
   createScriptSource,
   createScriptTailSource,
@@ -370,12 +371,23 @@ async function main() {
     }
   }
 
+  // Per-session JSONL diagnostic trace for the Director + Narrator. Only
+  // created in split-agents mode (the monolith has no Director). Writes
+  // to `state/transcripts/<shortid>.director.jsonl` next to the
+  // markdown + bookkeeper-trace files. The whole point: when the Director
+  // returns prose instead of JSON (Q17), the leaked text is recoverable
+  // for debugging rather than being lost to the terminal.
+  const directorTrace = args.splitAgents
+    ? createDirectorTrace(stateDir)
+    : undefined;
+
   const turnRunner: TurnRunner = args.splitAgents
     ? createSplitTurnRunner({
         gameSystemPrompt: systemPrompt,
         gameServer,
         facilitatorServer,
         transcript,
+        directorTrace,
       })
     : createMonolithTurnRunner({
         sharedOptions,
@@ -428,6 +440,7 @@ async function main() {
   const firstResult = await turnRunner.runTurn({
     userPrompt: firstPrompt,
     playerInput: firstPlayerResponseAfterOpening,
+    turn: turnNumber,
   });
   enqueueBookkeeper({
     turnText:
@@ -517,6 +530,7 @@ async function main() {
         const res = await turnRunner.runTurn({
           userPrompt: newRunInitialPrompt,
           playerInput: newRunFirstResponse,
+          turn: turnNumber,
         });
         enqueueBookkeeper({
           turnText:
@@ -541,7 +555,10 @@ async function main() {
       });
       turnNumber += 1;
       turnRunner.resetSession();
-      const res = await turnRunner.runTurn({ userPrompt: freshSessionPrompt });
+      const res = await turnRunner.runTurn({
+        userPrompt: freshSessionPrompt,
+        turn: turnNumber,
+      });
       enqueueBookkeeper({
         turnText: res.facilitatorText,
         turn: turnNumber,
@@ -560,7 +577,10 @@ async function main() {
 
     transcript.recordPlayerInput(input);
     turnNumber += 1;
-    const res = await turnRunner.runTurn({ userPrompt: input });
+    const res = await turnRunner.runTurn({
+      userPrompt: input,
+      turn: turnNumber,
+    });
     enqueueBookkeeper({
       turnText: `> ${input}\n\n${res.facilitatorText}`,
       turn: turnNumber,

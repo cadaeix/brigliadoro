@@ -23,7 +23,9 @@ Compose: `--seed=42 --player-script-tail=./turns.ndjson --player-preferences=./p
 ## Observability is per-session
 
 - Markdown transcript: `state/transcripts/<shortid>.md` (player + facilitator text + tool calls + tool results).
+- Player-view side transcript: `state/transcripts/<shortid>.player-view.md` (facilitator narration + player inputs only, no mechanical / bookkeeping noise — fed to external player harnesses like brigliadoro-roland).
 - JSONL subagent trace: `state/transcripts/<shortid>.subagents.jsonl` (one line per subagent invocation: turn, input, tool calls, duration).
+- JSONL director trace (split-agents only): `state/transcripts/<shortid>.director.jsonl` (one line per turn: Director input + tool calls + raw streamed text + parsed brief OR error, plus Narrator brief + prose + durations). The whole point of this file is being able to recover what the Director actually said when it streams prose instead of JSON (Q17-shaped bugs). On Director failure the same raw text is also surfaced inline in the `.md` transcript under a `<!-- director-failure -->` block so the drift is visible at the place the degraded message lands. Anchored on the Narrator session id on success turns (pairs by short id with the `.md`), the Director session id on failure turns.
 
 If a bug repro requires more visibility, extend these files rather than inventing a new logging channel.
 

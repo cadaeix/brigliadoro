@@ -38,6 +38,13 @@ export interface TurnInput {
    *  The Split runner threads this into the Director's brief; the
    *  Monolith runner ignores it. Defaults to `userPrompt` when omitted. */
   playerInput?: string;
+  /** 1-indexed turn number within the sitting, threaded from play.ts's
+   *  turn counter. Used by the Split runner to align director-trace
+   *  entries with bookkeeper-trace entries (same turn number lands in
+   *  both JSONL files). The Monolith runner ignores it — there's no
+   *  director.jsonl for the monolith path. Optional for test ergonomics
+   *  and back-compat; runners default to `0` when omitted. */
+  turn?: number;
 }
 
 export interface TurnOutput {

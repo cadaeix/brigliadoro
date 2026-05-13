@@ -30,6 +30,7 @@ import {
   type NarratorBrief,
 } from "./narrator-brief.js";
 import type { TranscriptWriter } from "./transcript.js";
+import type { DirectorToolCall } from "./director-trace.js";
 import {
   extractJsonObject,
   streamSdkQuery,
@@ -67,18 +68,32 @@ export interface DirectorRunOptions {
   transcript: TranscriptWriter;
 }
 
+/** Diagnostic payload captured during a Director run, surfaced on both
+ *  success and failure so the split-turn runner can write a director-trace
+ *  entry without re-walking the stream. `rawText` is the model's streamed
+ *  assistant text (the JSON brief on success, leaked prose on failure);
+ *  `toolCalls` carries args + result for every MCP tool the Director
+ *  invoked this turn. */
+export interface DirectorDiagnostics {
+  rawText: string;
+  toolCalls: DirectorToolCall[];
+  durationMs: number;
+}
+
 export type DirectorRunResult =
   | {
       ok: true;
       brief: NarratorBrief;
       sessionId: string;
       rawJson: string;
+      diagnostics: DirectorDiagnostics;
     }
   | {
       ok: false;
       error: string;
       rawText: string;
       sessionId?: string;
+      diagnostics: DirectorDiagnostics;
     };
 
 /**
@@ -119,12 +134,20 @@ export async function runDirector(
     ...(resumeSessionId ? { resume: resumeSessionId } : {}),
   };
 
+  // Capture tool calls + their results for the trace. Paired by SDK id
+  // so a tool_result that arrives out-of-order with its tool_use still
+  // lands on the right entry. tool_use blocks become entries
+  // immediately; tool_result blocks slot in via the id index.
+  const toolCalls: DirectorToolCall[] = [];
+  const toolIndexById = new Map<string, number>();
+
+  const startedAt = Date.now();
   const summary = await streamSdkQuery(
     query({ prompt, options: queryOptions }),
     {
       // Director text is the JSON brief — internal, not for stdout.
       // `streamSdkQuery` accumulates it into summary.text regardless.
-      onToolUse({ name, input }) {
+      onToolUse({ name, input, id }) {
         const hint = summariseToolInput(input);
         // Log tool call to transcript and to console as a dim line so the
         // operator can see mechanics firing during play.
@@ -132,9 +155,20 @@ export async function runDirector(
           `\n\x1b[2m  [director] ↪ ${name}${hint}\x1b[0m\n`
         );
         transcript.recordToolCall(`director:${name}`, hint);
+        const idx = toolCalls.push({ tool: name, args: input }) - 1;
+        if (id) toolIndexById.set(id, idx);
       },
-      onToolResult({ name, text }) {
+      onToolResult({ name, text, id }) {
         transcript.recordToolResult(`director:${name}`, text);
+        const idx = toolIndexById.get(id);
+        if (idx !== undefined) {
+          toolCalls[idx]!.result = text;
+        } else {
+          // Defensive: tool_result without a matching tool_use. Shouldn't
+          // happen in practice (the SDK pairs them) but if it does we
+          // record it as an orphan rather than dropping it on the floor.
+          toolCalls.push({ tool: name, args: undefined, result: text });
+        }
       },
       onResult({ subtype }) {
         if (subtype !== "success") {
@@ -143,12 +177,19 @@ export async function runDirector(
       },
     }
   );
+  const durationMs = Date.now() - startedAt;
 
   const sessionId = summary.sessionId;
   // Prefer streamed assistant text; fall back to result-message synthesis.
   // Same dual-channel handling as the auditor harness — SDK can put the
   // final response in either place depending on how the model ended.
   const raw = summary.text.trim() || summary.rawResult.trim();
+
+  const diagnostics: DirectorDiagnostics = {
+    rawText: raw,
+    toolCalls,
+    durationMs,
+  };
 
   const json = extractJsonObject(raw);
   if (!json) {
@@ -160,6 +201,7 @@ export async function runDirector(
         `final result: ${summary.rawResult.length} chars.`,
       rawText: raw,
       sessionId,
+      diagnostics,
     };
   }
 
@@ -170,6 +212,7 @@ export async function runDirector(
       error: parsed.error,
       rawText: json,
       sessionId,
+      diagnostics,
     };
   }
 
@@ -178,5 +221,6 @@ export async function runDirector(
     brief: parsed.brief,
     sessionId,
     rawJson: json,
+    diagnostics,
   };
 }
