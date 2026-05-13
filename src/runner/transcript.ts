@@ -78,8 +78,29 @@ export interface TranscriptWriter {
   emitAwaitingMarker(): void;
 }
 
-export function createTranscriptWriter(stateDir: string): TranscriptWriter {
+export interface TranscriptWriterOptions {
+  /** When true, `emitAwaitingMarker()` writes the
+   *  `<<<BRIGLIADORO-AWAITING ...>>>` line to stdout. When false (the
+   *  default), the method is a no-op.
+   *
+   *  External-driver scenarios (e.g. brigliadoro-roland tailing the
+   *  subprocess stdout) need the markers; human players running
+   *  `npm run play` don't, and would see the line as visual noise.
+   *
+   *  play.ts wires this to `args.playerScriptTailPath !== undefined` —
+   *  tail mode is the seam external drivers use, so it's a clean
+   *  proxy for "I'm being driven by something that wants markers."
+   *  If a non-tail driver use case turns up later, add an explicit
+   *  `--emit-markers` flag rather than broadening this heuristic. */
+  emitAwaitingMarkers?: boolean;
+}
+
+export function createTranscriptWriter(
+  stateDir: string,
+  options: TranscriptWriterOptions = {}
+): TranscriptWriter {
   const transcriptsDir = path.join(stateDir, "transcripts");
+  const emitAwaitingMarkers = options.emitAwaitingMarkers ?? false;
   let gameName = "TTRPG Runner";
   let mode: SessionMode = "initial";
   let seedLabel: string | undefined;
@@ -296,6 +317,11 @@ export function createTranscriptWriter(stateDir: string): TranscriptWriter {
       return playerViewPath;
     },
     emitAwaitingMarker() {
+      // No-op unless an external driver has explicitly opted in via the
+      // factory option. Human players running `npm run play` directly
+      // don't want the marker line cluttering their session.
+      if (!emitAwaitingMarkers) return;
+
       // External drivers (e.g. an LLM-player harness) parse this marker
       // on stdout to detect when it's the player's turn. Format is
       // designed for simple regex parsing — key=value pairs space-separated.

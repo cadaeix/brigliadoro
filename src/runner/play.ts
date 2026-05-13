@@ -251,7 +251,13 @@ async function main() {
   };
 
   // Transcript logger — per-session markdown file under state/transcripts/.
-  const transcript = createTranscriptWriter(stateDir);
+  // Tail-mode players (e.g. brigliadoro-roland) are external drivers and
+  // need the `<<<BRIGLIADORO-AWAITING ...>>>` stdout markers to detect
+  // turn boundaries; stdin and one-shot script modes are for humans and
+  // test fixtures, where the marker line would just be visual noise.
+  const transcript = createTranscriptWriter(stateDir, {
+    emitAwaitingMarkers: args.playerScriptTailPath !== undefined,
+  });
 
   // Subagent trace — per-session JSONL next to the markdown transcript.
   const subagentTrace = createSubagentTrace(stateDir);

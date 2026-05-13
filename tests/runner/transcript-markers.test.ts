@@ -32,7 +32,7 @@ describe("TranscriptWriter awaiting markers", () => {
   });
 
   it("emits a bare marker before the session id is known", () => {
-    const t = createTranscriptWriter(tmp);
+    const t = createTranscriptWriter(tmp, { emitAwaitingMarkers: true });
     t.beginSession({ gameName: "Test Game", mode: "initial" });
 
     expect(t.currentTranscriptPath()).toBe(null);
@@ -43,8 +43,29 @@ describe("TranscriptWriter awaiting markers", () => {
     expect(stdoutWrites).toEqual(["<<<BRIGLIADORO-AWAITING>>>\n"]);
   });
 
-  it("emits a full marker with both paths once the session id is known", () => {
+  it("is a no-op when emitAwaitingMarkers is false (the default)", () => {
+    // Default construction — no opts; matches the human-player path
+    // where `npm run play` reads stdin and should never see markers.
     const t = createTranscriptWriter(tmp);
+    t.beginSession({ gameName: "Test Game", mode: "initial" });
+    t.recordFacilitatorChunk("Some facilitator text.\n");
+    t.endFacilitatorTurn("abc12345-deadbeef-0000-0000-000000000000");
+
+    stdoutWrites.length = 0;
+    t.emitAwaitingMarker();
+    // Even in the full-path state, emit is silent without the opt-in.
+    expect(stdoutWrites).toEqual([]);
+
+    // And explicitly false has the same behaviour as omitting the field.
+    const t2 = createTranscriptWriter(tmp, { emitAwaitingMarkers: false });
+    t2.beginSession({ gameName: "Test Game", mode: "initial" });
+    stdoutWrites.length = 0;
+    t2.emitAwaitingMarker();
+    expect(stdoutWrites).toEqual([]);
+  });
+
+  it("emits a full marker with both paths once the session id is known", () => {
+    const t = createTranscriptWriter(tmp, { emitAwaitingMarkers: true });
     t.beginSession({ gameName: "Test Game", mode: "initial" });
     t.recordFacilitatorChunk("Hello there.\n");
     // endFacilitatorTurn is what opens the transcript file (path becomes known).
@@ -62,7 +83,7 @@ describe("TranscriptWriter awaiting markers", () => {
   });
 
   it("marker paths match the actual transcript path and a player-view sibling", () => {
-    const t = createTranscriptWriter(tmp);
+    const t = createTranscriptWriter(tmp, { emitAwaitingMarkers: true });
     t.beginSession({ gameName: "Test Game", mode: "initial" });
     t.recordFacilitatorChunk("Greetings.\n");
     t.endFacilitatorTurn("abc12345-deadbeef-0000-0000-000000000000");
@@ -94,7 +115,7 @@ describe("TranscriptWriter awaiting markers", () => {
   });
 
   it("reverts to bare marker after resetForNewSession until next turn ends", () => {
-    const t = createTranscriptWriter(tmp);
+    const t = createTranscriptWriter(tmp, { emitAwaitingMarkers: true });
     t.beginSession({ gameName: "Test Game", mode: "initial" });
     t.recordFacilitatorChunk("First session.\n");
     t.endFacilitatorTurn("abc12345-deadbeef-0000-0000-000000000000");
@@ -113,7 +134,7 @@ describe("TranscriptWriter awaiting markers", () => {
   });
 
   it("marker parses cleanly via the documented regex", () => {
-    const t = createTranscriptWriter(tmp);
+    const t = createTranscriptWriter(tmp, { emitAwaitingMarkers: true });
     t.beginSession({ gameName: "Test Game", mode: "initial" });
     t.recordFacilitatorChunk("Hi.\n");
     t.endFacilitatorTurn("abc12345-deadbeef-0000-0000-000000000000");
