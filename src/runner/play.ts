@@ -494,7 +494,7 @@ async function main() {
         console.log(
           `\n[Wiped: ${removed.length > 0 ? removed.join(", ") : "nothing to wipe"}]\n`
         );
-        // clearAllState only deletes files directly in stateDir, so the
+        // `clearAllState` only deletes files directly in stateDir, so the
         // `transcripts/` subfolder (and its prior `.md` / `.jsonl` files)
         // is preserved across /new by design — an audit trail across
         // campaign resets, not state to wipe.
@@ -504,33 +504,51 @@ async function main() {
           mode: "initial",
           seedLabel: seedModeLabel,
         });
-        // Set to 0 so the next regular-loop input increments to 1 — the
-        // "first turn after /new" is the player's next input, not /new
-        // itself.
-        turnNumber = 0;
+        turnNumber = 1;
         turnRunner.resetSession();
 
-        // Show the pre-rendered opening (which already contains the
-        // session-zero questions) and drop back to the input loop. No
-        // LLM call here: the opening IS the LLM-call-equivalent
-        // (pre-rendered by the characterizer at generate time). The
-        // player's next input through the normal loop will be turn 1,
-        // framed cold — the system prompt's "First contact" section
-        // guides the agent on session-zero handling without us having
-        // to pre-frame anything. This is the load-bearing property of
-        // /new: it is a *user-side* command, not a turn the model
-        // participates in. Matching that, /new produces no model call.
-        //
-        // Fallback for older runners with no openingMessage: a terse
-        // status line so the player has *some* signal that the wipe
-        // landed and the next input will start fresh. The model's
-        // "First contact" section will still handle the actual greet.
-        if (openingMessage) {
-          console.log(`\n${openingMessage}\n`);
-          transcript.recordFacilitatorChunk(openingMessage + "\n");
-        } else {
-          console.log("[New campaign — type anything to begin.]\n");
+        // Mirror the initial-mode openingMessage flow on /new — same
+        // shape as session launch: show the opening, wait for the
+        // player's first response, then call the LLM once with that
+        // response wrapped in `buildInitialPrompt` framing. No LLM call
+        // happens until the player has typed something; the "new game"
+        // framing is what makes the first turn coherent (the agent
+        // knows the player saw the opening and is responding to it).
+        const newRunOpening = await presentOpeningMessage({
+          openingMessage,
+          playerSource,
+          transcript,
+        });
+        if (newRunOpening.kind === "quit") {
+          await awaitPendingBookkeeper();
+          await playerSource.close();
+          console.log("\n[Thanks for playing!]");
+          return;
         }
+        const newRunFirstResponse =
+          newRunOpening.kind === "responded"
+            ? newRunOpening.text
+            : undefined;
+
+        const newRunInitialPrompt = buildInitialPrompt({
+          gameName: config.name,
+          openingMessage,
+          playerFirstResponse: newRunFirstResponse,
+          playerPreferencesText,
+        });
+        const res = await turnRunner.runTurn({
+          userPrompt: newRunInitialPrompt,
+          playerInput: newRunFirstResponse,
+          turn: turnNumber,
+        });
+        enqueueBookkeeper({
+          turnText:
+            newRunFirstResponse !== undefined
+              ? `> ${newRunFirstResponse}\n\n${res.facilitatorText}`
+              : res.facilitatorText,
+          turn: turnNumber,
+          sessionId: res.sessionIdForTrace,
+        });
         continue;
       }
 
