@@ -20,6 +20,10 @@ import type { BookSnapshot } from "./lib/runner/bookkeeper.js";
 import { createSubagentTrace } from "./lib/runner/subagent-trace.js";
 import { createDirectorTrace } from "./lib/runner/director-trace.js";
 import {
+  matchCommand,
+  unknownCommandMessage,
+} from "./lib/runner/commands.js";
+import {
   createScriptSource,
   createScriptTailSource,
   createStdinSource,
@@ -403,22 +407,27 @@ async function main() {
   });
 
   /**
-   * Show the opening message and loop on `/new`-at-the-opening-prompt
-   * commands. When the player types `/new` before answering the
-   * opening's questions, wipe state and re-show the opening — a clean
-   * do-over rather than passing `"/new"` to the LLM as the first
-   * response (which would produce a meta-narrative "let's start fresh"
-   * reply instead of a genuine restart).
+   * Show the opening message and loop on slash-command outcomes from
+   * `presentOpeningMessage`. Three cases are handled in the loop:
+   *
+   * - `new-command` — player typed /new. Wipe state, reset transcript
+   *   + turnRunner, loop back. A clean do-over without ever passing
+   *   `"/new"` to the LLM as their first response.
+   * - `new-session-command` — player typed /new-session. At the opening
+   *   prompt there's no session to drop (turnRunner.resetSession was
+   *   already called by the caller before the first showing), but for
+   *   symmetry with the runtime command we still call `clearSessionId`
+   *   (it's a no-op when the file doesn't exist) and log a status line.
+   *   State is preserved: this is the conservative variant.
+   * - quit / no-opening / responded — return to caller for the normal
+   *   first-turn flow.
+   *
+   * `unknown` is handled inside `presentOpeningMessage` itself (print
+   * help line, re-prompt at the same opening), so we never see it here.
    *
    * Used at initial-mode startup AND in the runtime `/new` handler —
    * both places need the same loop, because in either place the player
-   * can type `/new` at the opening prompt expecting a do-over.
-   *
-   * Returns:
-   *   - `"quit"` — player typed /quit; caller should close and exit
-   *   - `"no-opening"` — no openingMessage was configured
-   *   - `"responded"` with the player's text — caller threads through
-   *     buildInitialPrompt and the first LLM turn
+   * can type `/new` or `/new-session` at the opening prompt.
    */
   async function showOpeningWithNewCommandLoop(): Promise<
     | { kind: "quit" }
@@ -431,8 +440,32 @@ async function main() {
         playerSource,
         transcript,
       });
-      if (outcome.kind !== "new-command") {
+      if (
+        outcome.kind !== "new-command" &&
+        outcome.kind !== "new-session-command"
+      ) {
         return outcome;
+      }
+      if (outcome.kind === "new-session-command") {
+        // /new-session at the opening prompt — no session to drop yet,
+        // state preserved. Log the no-op for transparency and loop
+        // back to re-show. `clearSessionId` is defensive: in the
+        // unlikely case session-id.txt exists at the opening prompt
+        // (e.g. a runner left in an odd state), this drops it
+        // consistently with runtime /new-session semantics.
+        clearSessionId(stateDir);
+        console.log(
+          "\n[/new-session at opening: no session to drop yet — re-showing opening]\n"
+        );
+        transcript.resetForNewSession();
+        transcript.beginSession({
+          gameName: config.name,
+          mode: "initial",
+          seedLabel: seedModeLabel,
+        });
+        turnNumber = 0;
+        turnRunner.resetSession();
+        continue;
       }
       // /new at the opening prompt — wipe state, reset transcript +
       // turnRunner, then loop back to re-show the opening. No
@@ -508,24 +541,39 @@ async function main() {
     transcript.emitAwaitingMarker();
     const input = await playerSource.prompt("\n> ");
     const trimmed = input.trim();
-    const lower = trimmed.toLowerCase();
+    const cmd = matchCommand(input);
 
-    if (lower === "/quit") {
-      // Let pending bookkeeper writes land before we exit.
-      await awaitPendingBookkeeper();
-      console.log("\n[Thanks for playing!]");
-      break;
-    }
+    // Universal slash-command interception. Anything starting with `/`
+    // is a meta-command and never reaches the LLM — known commands
+    // dispatch; unknown ones print a help line and re-prompt. The
+    // alternative ("pass unrecognised slash commands through as turns")
+    // produced the /new-at-the-opening bug and would do the same for
+    // any typo like /quti or /Save. Keep the dispatcher narrow at this
+    // layer; downstream branches (the `cmd.kind === "new"` case below)
+    // own the heavier behaviour.
+    if (cmd !== null) {
+      if (cmd.kind === "unknown") {
+        console.log(unknownCommandMessage(cmd.raw));
+        continue;
+      }
+      if (cmd.kind === "quit") {
+        // Let pending bookkeeper writes land before we exit.
+        await awaitPendingBookkeeper();
+        console.log("\n[Thanks for playing!]");
+        break;
+      }
 
-    if (lower === "/new" || lower === "/new-session") {
+      // /new and /new-session both require session-command support.
+      // The Phase-1 split-agents runner advertises
+      // `supportsSessionCommands: false` so they're gated here.
       if (!turnRunner.supportsSessionCommands) {
         console.log(
-          `[${lower} not supported in Phase-1 split-agents mode. Use /quit and restart.]\n`
+          `[${cmd.raw} not supported in Phase-1 split-agents mode. Use /quit and restart.]\n`
         );
         continue;
       }
 
-      if (lower === "/new") {
+      if (cmd.kind === "new") {
         const confirmed = await confirmPrompt(
           playerSource,
           "This will wipe ALL state (scratchpad, character sheets, NPCs, factions) and start a new campaign. Continue?",
@@ -596,28 +644,37 @@ async function main() {
         continue;
       }
 
-      // /new-session — keep world state, drop the Claude session.
-      await awaitPendingBookkeeper();
-      clearSessionId(stateDir);
-      console.log("\n[Cleared session-id; world state preserved.]\n");
-      transcript.resetForNewSession();
-      transcript.beginSession({
-        gameName: config.name,
-        mode: "fresh-session",
-        seedLabel: seedModeLabel,
-      });
-      turnNumber += 1;
-      turnRunner.resetSession();
-      const res = await turnRunner.runTurn({
-        userPrompt: freshSessionPrompt,
-        turn: turnNumber,
-      });
-      enqueueBookkeeper({
-        turnText: res.facilitatorText,
-        turn: turnNumber,
-        sessionId: res.sessionIdForTrace,
-      });
-      continue;
+      if (cmd.kind === "new-session") {
+        // Keep world state, drop the Claude session.
+        await awaitPendingBookkeeper();
+        clearSessionId(stateDir);
+        console.log("\n[Cleared session-id; world state preserved.]\n");
+        transcript.resetForNewSession();
+        transcript.beginSession({
+          gameName: config.name,
+          mode: "fresh-session",
+          seedLabel: seedModeLabel,
+        });
+        turnNumber += 1;
+        turnRunner.resetSession();
+        const res = await turnRunner.runTurn({
+          userPrompt: freshSessionPrompt,
+          turn: turnNumber,
+        });
+        enqueueBookkeeper({
+          turnText: res.facilitatorText,
+          turn: turnNumber,
+          sessionId: res.sessionIdForTrace,
+        });
+        continue;
+      }
+
+      // Exhaustiveness guard — every CommandKind should be handled
+      // above. If a new kind is added without a branch here, this
+      // throws at runtime rather than silently passing the command
+      // through to the LLM.
+      const _exhaustive: never = cmd.kind;
+      throw new Error(`Unhandled command kind: ${_exhaustive as string}`);
     }
 
     if (trimmed === "") continue;

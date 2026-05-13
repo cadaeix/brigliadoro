@@ -22,11 +22,13 @@
  */
 import type { PlayerInputSource } from "./player-input.js";
 import type { TranscriptWriter } from "./transcript.js";
+import { matchCommand, unknownCommandMessage } from "./commands.js";
 
 export type OpeningMessageOutcome =
   | { kind: "no-opening" }
   | { kind: "quit" }
   | { kind: "new-command" }
+  | { kind: "new-session-command" }
   | { kind: "responded"; text: string };
 
 export interface PresentOpeningMessageOptions {
@@ -48,21 +50,29 @@ export interface PresentOpeningMessageOptions {
  *     player source, etc.) and for printing the closing banner.
  *   - `new-command` — player typed `/new` at the opening prompt. The
  *     caller should wipe state and re-show the opening (a do-over
- *     before the player has committed any turns). Intercepted here
- *     because otherwise the runtime would pass `"/new"` to the LLM as
- *     the player's first response — the LLM has no special handling
- *     for that string, sees it as a normal input via `buildInitialPrompt`
- *     framing ("their first response was: /new"), and produces a
- *     meta-narrative reply ("alright, let's start fresh") instead of
- *     the player getting a clean do-over. The same trap exists for
- *     /quit and we already intercept it; /new gets the same treatment.
+ *     before the player has committed any turns).
+ *   - `new-session-command` — player typed `/new-session` at the
+ *     opening prompt. At this point there's no session to drop yet,
+ *     so semantically it's "drop the (nonexistent) session, keep the
+ *     (empty) world" — effectively just re-show the opening without
+ *     wiping. Caller distinguishes it from `new-command` for the
+ *     status-line wording, but the structural action (loop back to
+ *     re-show opening) is the same.
  *   - `responded` — player gave a non-command response. Caller threads
  *     `text` into `buildInitialPrompt` so the agent picks up from there.
  *
- * The opening line is mirrored to the transcript as a facilitator chunk;
- * the player's response (when any) is mirrored as a player input.
- * Command outcomes (/quit, /new) are NOT mirrored as player inputs —
- * they're user-side meta-actions, not turns the agent sees.
+ * Unknown `/`-prefixed input (`/quti`, `/help`, `/sav3`) is handled
+ * INTERNALLY in a loop: print an unknown-command help line and
+ * re-prompt at this same opening, without ever returning to the
+ * caller. This keeps the caller's switch small (only the meaningful
+ * outcomes) and means typos never leak through to the LLM as
+ * "the player's first response was /quti."
+ *
+ * The opening line is mirrored to the transcript as a facilitator
+ * chunk on every iteration of the loop; the player's response (when
+ * any) is mirrored as a player input. Command outcomes (/quit, /new,
+ * /new-session, unknown) are NOT mirrored as player inputs — they're
+ * user-side meta-actions, not turns the agent sees.
  */
 export async function presentOpeningMessage(
   opts: PresentOpeningMessageOptions
@@ -70,20 +80,45 @@ export async function presentOpeningMessage(
   const { openingMessage, playerSource, transcript } = opts;
   if (!openingMessage) return { kind: "no-opening" };
 
-  console.log(`\n${openingMessage}\n`);
-  transcript.recordFacilitatorChunk(openingMessage + "\n");
-  transcript.emitAwaitingMarker();
-  const userInput = await playerSource.prompt("\n> ");
-  const trimmed = userInput.trim();
-  const lower = trimmed.toLowerCase();
-  if (lower === "/quit") {
-    return { kind: "quit" };
+  // Loop so unknown commands re-prompt without re-rendering the
+  // opening (the player already saw it; the re-prompt is just `> `).
+  // First iteration shows the opening; subsequent iterations only
+  // print the unknown-command line and the prompt.
+  let firstIteration = true;
+  while (true) {
+    if (firstIteration) {
+      console.log(`\n${openingMessage}\n`);
+      transcript.recordFacilitatorChunk(openingMessage + "\n");
+      firstIteration = false;
+    }
+    transcript.emitAwaitingMarker();
+    const userInput = await playerSource.prompt("\n> ");
+    const cmd = matchCommand(userInput);
+
+    if (cmd === null) {
+      // Normal non-slash input — record + return as the first
+      // response. Use the trimmed text so trailing newlines from the
+      // input source don't leak into buildInitialPrompt.
+      const trimmed = userInput.trim();
+      transcript.recordPlayerInput(trimmed);
+      return { kind: "responded", text: trimmed };
+    }
+
+    switch (cmd.kind) {
+      case "quit":
+        return { kind: "quit" };
+      case "new":
+        return { kind: "new-command" };
+      case "new-session":
+        return { kind: "new-session-command" };
+      case "unknown":
+        // Print help to stdout only — don't pollute the transcript
+        // with operator-facing harness chatter. Loop back to the
+        // prompt without re-rendering the opening (already shown).
+        console.log(unknownCommandMessage(cmd.raw));
+        break;
+    }
   }
-  if (lower === "/new") {
-    return { kind: "new-command" };
-  }
-  transcript.recordPlayerInput(trimmed);
-  return { kind: "responded", text: trimmed };
 }
 
 export interface BuildInitialPromptOptions {

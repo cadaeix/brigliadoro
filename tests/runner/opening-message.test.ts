@@ -168,12 +168,12 @@ describe("presentOpeningMessage command interception", () => {
     expect(consumed).toBe(false);
   });
 
-  it("does NOT intercept /new-session at the opening prompt (passes through as input)", async () => {
-    // /new-session at the opening prompt is an edge case — there's no
-    // existing session to drop. Currently treated as a normal input;
-    // if a future need arises (e.g. wanting to keep world state and
-    // re-show the opening), add another command outcome. For now,
-    // pass-through is the conservative choice.
+  it("returns new-session-command when the player types /new-session at the opening prompt", async () => {
+    // At the opening prompt /new-session is essentially equivalent
+    // to /new (no session yet to drop), but the caller distinguishes
+    // them for status-line wording — /new-session preserves state,
+    // /new wipes it. The intercept is the load-bearing part: without
+    // it, "/new-session" gets passed to the LLM as a first response.
     const transcript = createTranscriptWriter(tmp);
     transcript.beginSession({ gameName: "Test", mode: "initial" });
 
@@ -182,6 +182,43 @@ describe("presentOpeningMessage command interception", () => {
       playerSource: fixedInputSource("/new-session"),
       transcript,
     });
-    expect(outcome).toEqual({ kind: "responded", text: "/new-session" });
+    expect(outcome).toEqual({ kind: "new-session-command" });
+  });
+
+  it("loops on unknown commands internally — re-prompts until a real input or known command arrives", async () => {
+    // Unknown commands print a help line and re-prompt at the same
+    // opening (without re-rendering the opening text). The harness
+    // never sees them; the LLM definitely never sees them.
+    const transcript = createTranscriptWriter(tmp);
+    transcript.beginSession({ gameName: "Test", mode: "initial" });
+
+    // Scripted source that returns /unknown1, then /quti, then a real
+    // response. The presentOpeningMessage loop should consume the
+    // first two as unknowns and return on the third.
+    const responses = ["/unknown1", "/quti", "Frankie"];
+    let i = 0;
+    const source: PlayerInputSource = {
+      async prompt() {
+        return responses[i++]!;
+      },
+      async close() {},
+    };
+
+    const outcome = await presentOpeningMessage({
+      openingMessage: "Opening.",
+      playerSource: source,
+      transcript,
+    });
+    expect(outcome).toEqual({ kind: "responded", text: "Frankie" });
+
+    // All three prompts were consumed.
+    expect(i).toBe(3);
+
+    // None of the unknowns leaked into the transcript as player input.
+    transcript.endFacilitatorTurn("test-session-1234");
+    const main = fs.readFileSync(transcript.currentTranscriptPath()!, "utf-8");
+    expect(main).not.toContain("/unknown1");
+    expect(main).not.toContain("/quti");
+    expect(main).toContain("> Frankie");
   });
 });
